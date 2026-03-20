@@ -38,16 +38,19 @@ bun run dev -- run --task "Refactor the auth module to use JWT" --depth medium
 
 ## Run Options
 
-| Flag               | Description                                                        |
-|--------------------|--------------------------------------------------------------------|
-| `--task`           | The task description or path to a task file.                       |
-| `--target`         | Path to the target workspace the deliberation concerns.            |
-| `--depth`          | Depth profile: `low`, `medium`, `high`, or `exhaustive`.           |
-| `--autonomy`       | Autonomy mode: `supervised` or `autonomous`.                       |
-| `--transcripts`    | Transcript retention: `none`, `summary`, or `full`.                |
-| `--artifact-root`  | Directory for storing run artifacts.                               |
-| `--adapters`       | Comma-separated list of adapters to use (e.g. `claude,codex`).     |
-| `--dry-run`        | Validate inputs and print the execution plan without running it.   |
+| Flag               | Required | Default                    | Description                                                  |
+|--------------------|----------|----------------------------|--------------------------------------------------------------|
+| `--task`           | **Yes**  | —                          | The task or question to deliberate.                          |
+| `--target`         | No       | `"default"`                | Target workspace or topic context.                           |
+| `--depth`          | No       | `medium`                   | Depth profile: `low`, `medium`, `high`, or `exhaustive`.     |
+| `--autonomy`       | No       | `supervised`               | Autonomy mode: `supervised` or `autonomous`.                 |
+| `--transcripts`    | No       | `summary`                  | Transcript retention: `none`, `summary`, or `full`.          |
+| `--artifact-root`  | No       | `~/.conclave/artifacts`    | Directory for storing run artifacts.                         |
+| `--adapters`       | No       | `claude,codex`             | Comma-separated list of adapters to use.                     |
+| `--dry-run`        | No       | `false`                    | Simulate the run without invoking adapters.                  |
+| `--config`         | No       | `./conclave.toml`          | Path to a project config file.                               |
+
+`--task` is the only required flag. Everything else has sensible defaults.
 
 ## Architecture Overview
 
@@ -72,14 +75,29 @@ Agents are accessed through an **adapter model**. Each adapter implements `detec
 
 ## Configuration
 
-Conclave uses TOML configuration files. See `conclave.toml.example` for a full reference.
+Every flag can also be set via TOML config files, so you don't need to pass them on every run.
 
-**Precedence** (highest to lowest):
+**Config files** (checked in order, later values override earlier):
 
-1. CLI flags
-2. Project-level `conclave.toml` in the target workspace
-3. User-level `~/.conclave/config.toml`
-4. Built-in defaults
+1. `~/.conclave/config.toml` — user-level defaults
+2. `./conclave.toml` (or path from `--config`) — project-level overrides
+3. CLI flags — highest precedence, always wins
+
+See `conclave.toml.example` for a full annotated reference.
+
+**Built-in defaults:**
+
+| Setting                | Default                  |
+|------------------------|--------------------------|
+| `depth`                | `medium`                 |
+| `autonomy`             | `supervised`             |
+| `transcript_retention` | `summary`                |
+| `artifact_root`        | `~/.conclave/artifacts`  |
+| `lanes.enabled`        | all 5 lane types         |
+| `lanes.max_parallel`   | `2`                      |
+| `limits.max_rounds`    | `6`                      |
+| `limits.stagnation_threshold` | `2`               |
+| `limits.max_claims`    | `50`                     |
 
 ## Stack
 
@@ -87,9 +105,9 @@ Conclave uses TOML configuration files. See `conclave.toml.example` for a full r
 - **Runtime:** Bun
 - **Config format:** TOML
 
-## Planning Source
+## Design Decisions
 
-This project was designed from the plan at `~/dev/docs/plans/2026-03-19-conclave-v1-standalone-plan.md`.
+See [ADR-001: V1 Foundations](docs/adr/001-v1-foundations.md) for the rationale behind the core v1 decisions.
 
 ## License
 

@@ -206,11 +206,28 @@ describe("promptForTask", () => {
     const pending = promptForTask({ input, output, intro: "Intro\n" });
     input.write("\n");
     input.write("Build interactive mode\n");
+    input.end();
 
     const task = await pending;
 
     expect(task).toBe("Build interactive mode");
     expect(transcript).toContain("Task cannot be empty");
+  });
+
+  test("collects multiline tasks until EOF", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+
+    const pending = promptForTask({ input, output });
+    input.write("Investigate interactive mode\n");
+    input.write("Include a reproduction case\n");
+    input.write("\n");
+    input.write("Add a regression test\n");
+    input.end();
+
+    expect(await pending).toBe(
+      "Investigate interactive mode\nInclude a reproduction case\n\nAdd a regression test"
+    );
   });
 
   test("returns null on EOF", async () => {

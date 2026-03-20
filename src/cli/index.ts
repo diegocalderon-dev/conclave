@@ -26,7 +26,7 @@ USAGE:
   conclave help                Show this help
 
 RUN OPTIONS:
-  -t, --task <text>            Task or question to deliberate (prompted in a TTY)
+  -t, --task <text>            Task or question to deliberate (prompted in a TTY; Ctrl+D submits multiline input)
   -T, --target <text>          Target workspace or topic context
   -d, --depth <profile>        Depth: low | medium | high | exhaustive (default: medium)
   -a, --autonomy <mode>        Mode: supervised | autonomous (default: supervised)
@@ -154,8 +154,8 @@ async function resolveTask(
   }
 
   const intro = invokedWithoutCommand
-    ? "conclave interactive mode\nEnter a task to deliberate. Press Ctrl+C to cancel.\n\n"
-    : "No task provided.\nEnter a task to deliberate. Press Ctrl+C to cancel.\n\n";
+    ? "conclave interactive mode\nEnter a task to deliberate. Press Enter for a new line, Ctrl+D to submit, or Ctrl+C to cancel.\n\n"
+    : "No task provided.\nEnter a task to deliberate. Press Enter for a new line, Ctrl+D to submit, or Ctrl+C to cancel.\n\n";
 
   return deps.promptForTask({ intro });
 }

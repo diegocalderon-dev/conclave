@@ -5,7 +5,23 @@ export interface PromptForTaskOptions {
   output?: NodeJS.WritableStream;
   intro?: string;
   prompt?: string;
+  continuationPrompt?: string;
   emptyTaskMessage?: string;
+}
+
+function trimEmptyBoundaryLines(lines: string[]): string[] {
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start]?.trim().length === 0) {
+    start += 1;
+  }
+
+  while (end > start && lines[end - 1]?.trim().length === 0) {
+    end -= 1;
+  }
+
+  return lines.slice(start, end);
 }
 
 export async function promptForTask(
@@ -16,11 +32,19 @@ export async function promptForTask(
     output = process.stdout,
     intro = "",
     prompt = "Task> ",
-    emptyTaskMessage = "Task cannot be empty. Enter a task or press Ctrl+C to cancel.\n",
+    continuationPrompt = "... ",
+    emptyTaskMessage =
+      "Task cannot be empty. Enter at least one line, then press Ctrl+D to submit or Ctrl+C to cancel.\n",
   } = options;
 
   const rl = createInterface({ input, output });
-  const handleSigint = () => rl.close();
+  const lines: string[] = [];
+  let cancelled = false;
+
+  const handleSigint = () => {
+    cancelled = true;
+    rl.close();
+  };
   rl.on("SIGINT", handleSigint);
 
   try {
@@ -31,16 +55,24 @@ export async function promptForTask(
     output.write(prompt);
 
     for await (const answer of rl) {
-      const task = answer.trim();
-      if (task.length > 0) {
-        return task;
+      if (lines.length === 0 && answer.trim().length === 0) {
+        output.write(emptyTaskMessage);
+        output.write(prompt);
+        continue;
       }
 
-      output.write(emptyTaskMessage);
-      output.write(prompt);
+      lines.push(answer);
+      output.write(continuationPrompt);
     }
 
-    return null;
+    output.write("\n");
+
+    if (cancelled) {
+      return null;
+    }
+
+    const task = trimEmptyBoundaryLines(lines).join("\n").trimEnd();
+    return task.trim().length > 0 ? task : null;
   } finally {
     rl.off("SIGINT", handleSigint);
     rl.close();

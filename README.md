@@ -75,7 +75,7 @@ conclave
 | `-n`  | `--dry-run`        | No       | `false`                    | Simulate the full protocol with synthetic data, without calling any adapter. Useful for testing config and verifying the artifact pipeline. |
 | `-c`  | `--config`         | No       | `./conclave.toml`          | Path to a project config file.                       |
 
-In non-interactive contexts, `--task` is required. In an interactive terminal, `conclave` and `conclave run` will prompt for it when omitted.
+In non-interactive contexts, `--task` is required. In an interactive terminal, `conclave` and `conclave run` will prompt for it when omitted. Interactive prompts accept multiple lines; press `Ctrl+D` to submit the task and `Ctrl+C` to cancel.
 
 ### Depth profiles
 

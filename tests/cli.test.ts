@@ -12,6 +12,15 @@ import type {
 } from "../src/core/types.js";
 import type { RunInput, RunResult } from "../src/orchestration/index.js";
 
+class TtyPassThrough extends PassThrough {
+  readonly isTTY = true;
+  rawModeHistory: boolean[] = [];
+
+  setRawMode(mode: boolean) {
+    this.rawModeHistory.push(mode);
+  }
+}
+
 function createWriter() {
   let value = "";
 
@@ -212,6 +221,33 @@ describe("promptForTask", () => {
 
     expect(task).toBe("Build interactive mode");
     expect(transcript).toContain("Task cannot be empty");
+  });
+
+  test("submits on Enter and inserts new lines on Shift+Enter in raw mode", async () => {
+    const input = new TtyPassThrough();
+    const output = new PassThrough();
+
+    const pending = promptForTask({ input, output });
+    input.write("Investigate interactive mode");
+    input.write("\x1b[13;2u");
+    input.write("Add a regression test");
+    input.write("\r");
+
+    expect(await pending).toBe(
+      "Investigate interactive mode\nAdd a regression test"
+    );
+    expect(input.rawModeHistory).toEqual([true, false]);
+  });
+
+  test("returns null when cancelled in raw mode", async () => {
+    const input = new TtyPassThrough();
+    const output = new PassThrough();
+
+    const pending = promptForTask({ input, output });
+    input.write("Investigate interactive mode");
+    input.write("\x03");
+
+    expect(await pending).toBeNull();
   });
 
   test("collects multiline tasks until EOF", async () => {

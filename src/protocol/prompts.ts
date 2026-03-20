@@ -13,7 +13,11 @@ ${target ? `TARGET/CONTEXT: ${target}` : ""}
 Produce your analysis with the following structure (use JSON):
 {
   "proposal": "Your main proposal or approach",
+  "candidateDeliverables": [
+    "Possible deliverable or output shape to carry forward"
+  ],
   "assumptions": ["List of assumptions you are making"],
+  "constraints": ["Constraints or guardrails visible from the task"],
   "risks": ["Identified risks"],
   "openQuestions": ["Questions that need resolution"],
   "confidence": "low | medium | high",
@@ -220,10 +224,19 @@ export function validationPrompt(
   agreementMatrix: AgreementEntry[],
   claims: Claim[]
 ): string {
+  const claimStr = claims
+    .map((claim) => {
+      const evidence =
+        claim.evidence && claim.evidence.length > 0
+          ? ` evidence=${JSON.stringify(claim.evidence)}`
+          : "";
+      return `- [${claim.id}] (${claim.source}, ${claim.status}): ${claim.text}${evidence}`;
+    })
+    .join("\n");
   const matrixStr = agreementMatrix
     .map(
       (e) =>
-        `- Claim ${e.claimId} (${e.status}): ${JSON.stringify(e.positions)}`
+        `- Claim ${e.claimId} refs=${JSON.stringify(e.claimIds)} (${e.status}): ${JSON.stringify(e.positions)}`
     )
     .join("\n");
 
@@ -234,14 +247,23 @@ TASK: ${task}
 AGREEMENT MATRIX:
 ${matrixStr || "(empty)"}
 
+CLAIM LEDGER:
+${claimStr || "(empty)"}
+
 Respond with JSON:
 {
   "feasibilityIssues": ["Claims that may not be feasible"],
   "missingConstraints": ["Constraints not yet considered"],
-  "unsupportedClaims": ["Claims without adequate evidence"],
+  "unsupportedClaimIds": ["claim ids without adequate evidence"],
   "hiddenAssumptions": ["Assumptions that should be made explicit"],
-  "misstatements": ["Places where agreement is overstated"],
+  "misstatements": [
+    {
+      "claimId": "claim id where agreement is overstated",
+      "reason": "Why the current synthesis overstates agreement"
+    }
+  ],
   "recommendations": ["Suggested changes to the synthesis"],
+  "recommendedNextActions": ["Concrete next actions the final deliverable should carry"],
   "overallAssessment": "strong | adequate | weak"
 }
 

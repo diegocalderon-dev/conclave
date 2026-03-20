@@ -28,7 +28,7 @@ USAGE:
 RUN OPTIONS:
   -t, --task <text>            Task or question to deliberate (prompted in a TTY; Enter submits, Shift+Enter inserts a new line, Ctrl+J is a fallback line break)
   -T, --target <text>          Target workspace or topic context
-  -d, --depth <profile>        Depth: low | medium | high | exhaustive (default: medium)
+  -d, --depth <profile>        Depth: low | medium | high | exhaustive (default: low)
   -a, --autonomy <mode>        Mode: supervised | autonomous (default: supervised)
       --transcripts <policy>   Transcripts: none | summary | full (default: summary)
   -o, --artifact-root <path>   Override artifact storage location

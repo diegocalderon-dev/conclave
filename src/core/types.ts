@@ -98,6 +98,8 @@ export type AutonomyMode = "supervised" | "autonomous";
 
 export type TranscriptRetention = "none" | "summary" | "full";
 
+export type ConfidenceLevel = "low" | "medium" | "high";
+
 // --- Claims ---
 
 export type ClaimStatus =
@@ -116,6 +118,14 @@ export interface Claim {
   round: number;
   evidence?: string[];
   modifiedFrom?: string; // parent claim id
+}
+
+export interface CandidateDeliverable {
+  id: string;
+  summary: string;
+  source: string;
+  round: number;
+  confidence?: ConfidenceLevel;
 }
 
 // --- Issues ---
@@ -156,6 +166,7 @@ export type AgreementStatus =
 
 export interface AgreementEntry {
   claimId: string;
+  claimIds: string[];
   status: AgreementStatus;
   positions: Record<string, string>; // adapter -> position summary
   hybridProposal?: string;
@@ -172,12 +183,23 @@ export interface RatificationVote {
   requestedEdits?: string[];
 }
 
+// --- Normalized Task Contract ---
+
+export interface NormalizedTaskContract {
+  prompt: string;
+  requestedDeliverable: string;
+  scopeHints: string[];
+  constraints: string[];
+  targetContext?: string;
+}
+
 // --- Run Manifest ---
 
 export interface RunManifest {
   runId: string;
   task: string;
   target?: string;
+  taskContract: NormalizedTaskContract;
   depth: DepthProfile;
   autonomy: AutonomyMode;
   transcriptRetention: TranscriptRetention;
@@ -193,7 +215,7 @@ export interface PhaseRecord {
   phase: Phase;
   startedAt: string;
   completedAt?: string;
-  status: "pending" | "running" | "completed" | "skipped" | "failed";
+  status: "pending" | "running" | "completed" | "skipped" | "failed" | "partial";
   summary?: string;
 }
 
@@ -201,10 +223,14 @@ export interface PhaseRecord {
 
 export interface DraftSynthesis {
   version: number;
+  candidateDeliverables: CandidateDeliverable[];
   agreedPoints: string[];
+  supportedClaimIds: string[];
   acceptedHybrids: string[];
+  assumptions: string[];
   unresolvedDisagreements: UnresolvedDisagreement[];
   conditionalAgreements: string[];
+  recommendedNextActions: string[];
   summary: string;
 }
 
@@ -298,6 +324,8 @@ export interface LaneOutput {
   lane: LaneType;
   adapterId: string;
   round: number;
+  candidateDeliverables: CandidateDeliverable[];
+  assumptions: string[];
   claims: Claim[];
   issues: Issue[];
   summary: string;

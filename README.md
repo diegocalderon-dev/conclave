@@ -28,7 +28,7 @@ bun run doctor
 bun run dev
 
 # Or run a deliberation directly
-bun run dev -- run -t "Refactor the auth module to use JWT" -d medium
+bun run dev -- run -t "Refactor the auth module to use JWT"
 ```
 
 ### Without cloning the repo
@@ -67,7 +67,7 @@ conclave
 |-------|--------------------|----------|----------------------------|------------------------------------------------------|
 | `-t`  | `--task`           | No in a TTY | --                      | The task or question to deliberate. If omitted in an interactive terminal, Conclave prompts for it. |
 | `-T`  | `--target`         | No       | --                         | Label for this deliberation context (used as the folder name under artifact root). Omit for one-off runs. |
-| `-d`  | `--depth`          | No       | `medium`                   | How thorough the deliberation should be. See [Depth profiles](#depth-profiles). |
+| `-d`  | `--depth`          | No       | `low`                      | How thorough the deliberation should be. See [Depth profiles](#depth-profiles). |
 | `-a`  | `--autonomy`       | No       | `supervised`               | `supervised`: normal run. `autonomous`: no human checkpoints. |
 |       | `--transcripts`    | No       | `summary`                  | What to keep from raw adapter output. See [Transcript retention](#transcript-retention). |
 | `-o`  | `--artifact-root`  | No       | `~/.conclave/artifacts`    | Where run output is stored.                          |
@@ -83,8 +83,8 @@ Depth controls how many rounds of deliberation run and which lane types are acti
 
 | Profile      | Rounds | Lanes used                                                    | When to use                               |
 |-------------|--------|---------------------------------------------------------------|-------------------------------------------|
-| `low`       | up to 2 | independent draft, atomic claim                              | Quick sanity check. ~5-10 min.            |
-| `medium`    | up to 4 | + issue debate                                                | Default. Good balance of depth and speed. |
+| `low`       | up to 2 | independent draft, atomic claim                              | Default. Fast path for most tasks.        |
+| `medium`    | up to 4 | + issue debate                                                | Deeper exploration when low is not enough. |
 | `high`      | up to 6 | + hybrid editing                                              | Important decisions worth more iteration. |
 | `exhaustive`| up to 10| + contrarian / minority report                               | Maximum rigor. Expect longer runs.        |
 
@@ -137,7 +137,7 @@ See `conclave.toml.example` for a full annotated reference.
 
 | Setting                       | Default                  |
 |-------------------------------|--------------------------|
-| `depth`                       | `medium`                 |
+| `depth`                       | `low`                    |
 | `autonomy`                    | `supervised`             |
 | `transcript_retention`        | `summary`                |
 | `artifact_root`               | `~/.conclave/artifacts`  |

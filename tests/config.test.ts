@@ -6,7 +6,7 @@ import { join } from "path";
 describe("Config", () => {
   test("default config has expected shape", () => {
     const config = getDefaultConfig();
-    expect(config.depth).toBe("medium");
+    expect(config.depth).toBe("low");
     expect(config.autonomy).toBe("supervised");
     expect(config.transcriptRetention).toBe("summary");
     expect(config.artifactRoot).toBe(join(homedir(), ".conclave", "artifacts"));
@@ -33,7 +33,7 @@ describe("Config", () => {
     expect(config.depth).toBe("low");
 
     const defaultConfig = getDefaultConfig();
-    expect(defaultConfig.depth).toBe("medium");
+    expect(defaultConfig.depth).toBe("low");
   });
 
   test("tilde expansion in artifact root", () => {

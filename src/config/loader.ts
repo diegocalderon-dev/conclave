@@ -15,7 +15,7 @@ import type {
 
 const DEFAULT_CONFIG: ConclaveConfig = {
   artifactRoot: join(homedir(), ".conclave", "artifacts"),
-  depth: "medium",
+  depth: "low",
   autonomy: "supervised",
   transcriptRetention: "summary",
   adapters: {

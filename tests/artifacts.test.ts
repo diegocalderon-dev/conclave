@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { ArtifactStore } from "../src/artifacts/store.js";
-import { existsSync, rmSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { Claim, Issue, DraftSynthesis, FinalSynthesis } from "../src/core/types.js";
@@ -63,6 +63,7 @@ describe("ArtifactStore", () => {
     store.saveAgreementMatrix([
       {
         claimId: "claim-r1-0",
+        claimIds: ["claim-r1-0"],
         status: "agreed",
         positions: { test: "Agreed" },
       },
@@ -75,10 +76,14 @@ describe("ArtifactStore", () => {
   test("saves and loads draft synthesis", () => {
     const draft: DraftSynthesis = {
       version: 1,
+      candidateDeliverables: [],
       agreedPoints: ["Point A"],
+      supportedClaimIds: ["claim-r1-0"],
       acceptedHybrids: [],
+      assumptions: [],
       unresolvedDisagreements: [],
       conditionalAgreements: [],
+      recommendedNextActions: [],
       summary: "Test synthesis",
     };
     store.saveDraftSynthesis(draft);
@@ -93,10 +98,14 @@ describe("ArtifactStore", () => {
       ratificationVotes: [{ adapterId: "test", outcome: "approved" }],
       synthesis: {
         version: 1,
+        candidateDeliverables: [],
         agreedPoints: ["Point A"],
+        supportedClaimIds: ["claim-r1-0"],
         acceptedHybrids: [],
+        assumptions: [],
         unresolvedDisagreements: [],
         conditionalAgreements: [],
+        recommendedNextActions: [],
         summary: "Test",
       },
       producedAt: new Date().toISOString(),
@@ -111,7 +120,13 @@ describe("ArtifactStore", () => {
     store.saveManifest({
       runId: "test-run-001",
       task: "Test task",
-      depth: "medium",
+      taskContract: {
+        prompt: "Test task",
+        requestedDeliverable: "Test task",
+        scopeHints: [],
+        constraints: [],
+      },
+      depth: "low",
       autonomy: "supervised",
       transcriptRetention: "summary",
       adapters: ["test"],
@@ -129,5 +144,127 @@ describe("ArtifactStore", () => {
     store.saveTranscript("discovery", "test", "This is a transcript");
     const path = join(store.getRunDir(), "transcript-discovery-test.txt");
     expect(existsSync(path)).toBe(true);
+  });
+
+  test("writes deliverable-first synthesis markdown", () => {
+    const manifest = {
+      runId: "test-run-001",
+      task: "Draft a refinement plan",
+      target: "/tmp/example-repo",
+      taskContract: {
+        prompt: "Draft a refinement plan",
+        requestedDeliverable: "Draft a refinement plan",
+        scopeHints: ["/tmp/example-repo"],
+        constraints: [],
+        targetContext: "/tmp/example-repo",
+      },
+      depth: "low" as const,
+      autonomy: "supervised" as const,
+      transcriptRetention: "summary" as const,
+      adapters: ["claude", "codex"],
+      activeLanes: ["independent-draft"],
+      startedAt: "2026-03-20T00:00:00.000Z",
+      completedAt: "2026-03-20T00:01:00.000Z",
+      artifactRoot: testRoot,
+      phases: [
+        {
+          phase: "discovery" as const,
+          startedAt: "2026-03-20T00:00:00.000Z",
+          completedAt: "2026-03-20T00:00:10.000Z",
+          status: "partial" as const,
+          summary: "One adapter returned an empty response.",
+        },
+      ],
+    };
+    const final: FinalSynthesis = {
+      ratified: false,
+      ratificationVotes: [
+        {
+          adapterId: "claude",
+          outcome: "approved",
+        },
+        {
+          adapterId: "codex",
+          outcome: "blocked",
+          objections: ["Needs clearer disagreement labeling."],
+        },
+      ],
+      synthesis: {
+        version: 1,
+        candidateDeliverables: [
+          {
+            id: "deliverable-r1-0",
+            summary: "Draft a refinement plan document",
+            source: "claude",
+            round: 1,
+            confidence: "medium",
+          },
+        ],
+        agreedPoints: ["Keep the default path fast."],
+        supportedClaimIds: ["claim-r1-0"],
+        acceptedHybrids: ["Preserve a deterministic consolidation step."],
+        assumptions: ["The task is still at planning scope, not implementation scope."],
+        unresolvedDisagreements: [
+          {
+            issueId: "ratification-codex",
+            title: "Ratification objection from codex",
+            positions: {
+              codex: "Needs clearer disagreement labeling.",
+            },
+            reason: "Blocked during ratification.",
+          },
+        ],
+        conditionalAgreements: ["Proceed once the target scope is confirmed."],
+        recommendedNextActions: [
+          "Resolve the remaining open questions before treating the deliverable as complete.",
+        ],
+        summary: "Keep the default path fast while preserving deterministic consolidation.",
+      },
+      producedAt: "2026-03-20T00:01:00.000Z",
+    };
+    const claims: Claim[] = [
+      {
+        id: "claim-r1-0",
+        text: "Keep the default path fast.",
+        status: "proposed",
+        source: "claude",
+        round: 1,
+        evidence: ["ADR 002 moves the default depth to low."],
+      },
+    ];
+    const issues: Issue[] = [
+      {
+        id: "issue-r1-0",
+        title: "Confirm the repo scope",
+        description: "Need to confirm whether the target is the local checkout or a linked worktree.",
+        state: "open",
+        raisedBy: "claude",
+        round: 1,
+        transitions: [],
+      },
+    ];
+
+    store.saveSynthesisMarkdown(
+      manifest,
+      final,
+      claims,
+      issues,
+      final.ratificationVotes
+    );
+
+    const markdown = readFileSync(join(store.getRunDir(), "synthesis.md"), "utf-8");
+    expect(markdown).toContain("# Deliverable: Draft a refinement plan");
+    expect(markdown).toContain("## Primary Response");
+    expect(markdown).toContain("## Candidate Deliverables Considered");
+    expect(markdown).toContain("## Key Claims and Evidence");
+    expect(markdown).toContain("## Assumptions and Constraints");
+    expect(markdown).toContain("## Unresolved Questions");
+    expect(markdown).toContain("## Labeled Disagreements");
+    expect(markdown).toContain("## Recommended Next Actions");
+    expect(markdown).toContain("## Ratification and Run Notes");
+    expect(markdown).toContain("Evidence: ADR 002 moves the default depth to low.");
+    expect(markdown).toContain("Assumption: The task is still at planning scope, not implementation scope.");
+    expect(markdown).not.toContain("## Verdict");
+    expect(markdown).not.toContain("## Agreed Points");
   });
 });

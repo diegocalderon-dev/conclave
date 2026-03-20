@@ -6,10 +6,74 @@ import {
   validateAgreementEntry,
   validateDraftSynthesis,
   validateFinalSynthesis,
+  validateTaskContract,
+  validateRunManifest,
 } from "../src/validation/artifacts.js";
-import type { Claim, Issue, DraftSynthesis, FinalSynthesis } from "../src/core/types.js";
+import type {
+  AgreementEntry,
+  Claim,
+  Issue,
+  DraftSynthesis,
+  FinalSynthesis,
+  NormalizedTaskContract,
+  RunManifest,
+} from "../src/core/types.js";
 
 describe("Artifact Validation", () => {
+  describe("validateTaskContract", () => {
+    test("valid contract passes", () => {
+      const contract: NormalizedTaskContract = {
+        prompt: "Review the auth flow",
+        requestedDeliverable: "Review the auth flow",
+        scopeHints: [],
+        constraints: [],
+      };
+      expect(validateTaskContract(contract)).toHaveLength(0);
+    });
+
+    test("missing requested deliverable fails", () => {
+      const contract = {
+        prompt: "Review the auth flow",
+        requestedDeliverable: "",
+        scopeHints: [],
+        constraints: [],
+      } as NormalizedTaskContract;
+      expect(
+        validateTaskContract(contract).some(
+          (error) => error.field === "requestedDeliverable"
+        )
+      ).toBe(true);
+    });
+  });
+
+  describe("validateRunManifest", () => {
+    test("manifest requires a task contract", () => {
+      const manifest = {
+        runId: "run-1",
+        task: "Review the auth flow",
+        taskContract: {
+          prompt: "Review the auth flow",
+          requestedDeliverable: "",
+          scopeHints: [],
+          constraints: [],
+        },
+        depth: "low",
+        autonomy: "supervised",
+        transcriptRetention: "summary",
+        adapters: ["claude"],
+        activeLanes: ["independent-draft"],
+        startedAt: new Date().toISOString(),
+        artifactRoot: "/tmp/conclave",
+        phases: [],
+      } as RunManifest;
+      expect(
+        validateRunManifest(manifest).some((error) =>
+          error.field.startsWith("taskContract.")
+        )
+      ).toBe(true);
+    });
+  });
+
   describe("validateClaim", () => {
     test("valid claim passes", () => {
       const claim: Claim = {
@@ -31,6 +95,20 @@ describe("Artifact Validation", () => {
       const claim = { id: "c1", text: "Test", status: "invalid" as any, source: "test", round: 1 } as Claim;
       const errors = validateClaim(claim);
       expect(errors.some((e) => e.field === "status")).toBe(true);
+    });
+  });
+
+  describe("validateAgreementEntry", () => {
+    test("requires stable claim references", () => {
+      const entry = {
+        claimId: "claim-r1-0",
+        claimIds: [],
+        status: "agreed",
+        positions: { claude: "agreed" },
+      } as AgreementEntry;
+      expect(
+        validateAgreementEntry(entry).some((error) => error.field === "claimIds")
+      ).toBe(true);
     });
   });
 
@@ -88,8 +166,11 @@ describe("Artifact Validation", () => {
     test("draft synthesis must not present disputes as consensus", () => {
       const draft: DraftSynthesis = {
         version: 1,
+        candidateDeliverables: [],
         agreedPoints: ["Use caching for invalidation strategy"],
+        supportedClaimIds: ["claim-r1-0"],
         acceptedHybrids: [],
+        assumptions: [],
         unresolvedDisagreements: [
           {
             issueId: "i1",
@@ -99,6 +180,7 @@ describe("Artifact Validation", () => {
           },
         ],
         conditionalAgreements: [],
+        recommendedNextActions: [],
         summary: "Test",
       };
       const errors = validateDraftSynthesis(draft);
@@ -108,10 +190,14 @@ describe("Artifact Validation", () => {
     test("clean draft synthesis passes", () => {
       const draft: DraftSynthesis = {
         version: 1,
+        candidateDeliverables: [],
         agreedPoints: ["Use Redis"],
+        supportedClaimIds: ["claim-r1-0"],
         acceptedHybrids: [],
+        assumptions: [],
         unresolvedDisagreements: [],
         conditionalAgreements: [],
+        recommendedNextActions: [],
         summary: "Test",
       };
       expect(validateDraftSynthesis(draft)).toHaveLength(0);
@@ -125,10 +211,14 @@ describe("Artifact Validation", () => {
         ratificationVotes: [{ adapterId: "test", outcome: "approved" }],
         synthesis: {
           version: 1,
+          candidateDeliverables: [],
           agreedPoints: [],
+          supportedClaimIds: [],
           acceptedHybrids: [],
+          assumptions: [],
           unresolvedDisagreements: [],
           conditionalAgreements: [],
+          recommendedNextActions: [],
           summary: "",
         },
         producedAt: new Date().toISOString(),
@@ -146,10 +236,14 @@ describe("Artifact Validation", () => {
         ],
         synthesis: {
           version: 1,
+          candidateDeliverables: [],
           agreedPoints: ["Point A"],
+          supportedClaimIds: ["claim-r1-0"],
           acceptedHybrids: [],
+          assumptions: [],
           unresolvedDisagreements: [],
           conditionalAgreements: [],
+          recommendedNextActions: [],
           summary: "Ratified",
         },
         producedAt: new Date().toISOString(),

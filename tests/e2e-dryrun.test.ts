@@ -50,7 +50,7 @@ describe("E2E Dry Run", () => {
     // Verify manifest structure
     const manifest = JSON.parse(readFileSync(join(dir, "run-manifest.json"), "utf-8"));
     expect(manifest.task).toBe("Design a testing strategy for microservices");
-    expect(manifest.depth).toBe("medium");
+    expect(manifest.depth).toBe("low");
     expect(manifest.phases.length).toBe(6);
     expect(manifest.completedAt).toBeTruthy();
 

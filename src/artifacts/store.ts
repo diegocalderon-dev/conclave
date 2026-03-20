@@ -126,13 +126,13 @@ export class ArtifactStore {
       "",
       "## How to read this folder",
       "",
-      "Start with **synthesis.md** — the human-readable deliverable with conclusions and disagreements.",
+      "Start with **synthesis.md** — the human-readable deliverable assembled around the requested outcome, evidence-backed claims, assumptions, open questions, and disagreements.",
       "",
       "| File | Purpose |",
       "|------|---------|",
-      "| `synthesis.md` | Readable summary of conclusions, agreed points, and unresolved disagreements |",
+      "| `synthesis.md` | Deliverable-first summary with primary response, candidate deliverables, claims with evidence, assumptions, disagreements, and next actions |",
       "| `README.md` | This file — folder index and orientation |",
-      "| `run-manifest.json` | Run metadata: task, config, phases, timing |",
+      "| `run-manifest.json` | Run metadata: task, normalized task contract, config, phases, timing |",
       "| `claim-ledger.json` | All claims with status and provenance |",
       "| `issue-ledger.json` | Disagreements and open questions with state transitions |",
       "| `agreement-matrix.json` | Per-claim agreement status across adapters |",
@@ -165,97 +165,172 @@ export class ArtifactStore {
     votes: RatificationVote[]
   ): void {
     const s = synthesis.synthesis;
+    const supportedClaims = s.supportedClaimIds
+      .map((claimId) => claims.find((claim) => claim.id === claimId))
+      .filter((claim): claim is Claim => Boolean(claim));
+    const openIssues = issues.filter((issue) => issue.state !== "resolved");
+    const nextActions =
+      s.recommendedNextActions.length > 0
+        ? s.recommendedNextActions
+        : deriveNextActions(manifest, synthesis, openIssues);
     const lines: string[] = [
-      `# Deliberation Synthesis`,
+      `# Deliverable: ${manifest.taskContract.requestedDeliverable}`,
       "",
       `> **Task:** ${manifest.task}`,
       manifest.target ? `> **Target:** ${manifest.target}` : "",
       `> **Depth:** ${manifest.depth} | **Adapters:** ${manifest.adapters.join(", ")} | **Run:** ${manifest.runId}`,
       `> **Date:** ${synthesis.producedAt}`,
+      `> **Ratification:** ${
+        synthesis.ratified
+          ? "Ratified"
+          : "Working draft with labeled disagreements"
+      }`,
       "",
     ];
 
-    // Verdict
-    if (synthesis.ratified) {
-      lines.push("## Verdict: Ratified");
-      lines.push("");
-      lines.push("Both adapters approved this synthesis.");
-    } else {
-      lines.push("## Verdict: Synthesis with unresolved disagreements");
-      lines.push("");
-      lines.push("Not all adapters fully approved. Disagreements are labeled below.");
-    }
+    lines.push("## Primary Response");
+    lines.push("");
+    lines.push(s.summary);
     lines.push("");
 
-    // Agreed points
-    if (s.agreedPoints.length > 0) {
-      lines.push(`## Agreed Points (${s.agreedPoints.length})`);
+    if (s.candidateDeliverables.length > 0) {
+      lines.push("## Candidate Deliverables Considered");
       lines.push("");
-      for (const point of s.agreedPoints) {
-        lines.push(`- ${point}`);
+      for (const deliverable of s.candidateDeliverables) {
+        const confidenceSuffix = deliverable.confidence
+          ? ` (${deliverable.confidence} confidence)`
+          : "";
+        lines.push(`- ${deliverable.summary}${confidenceSuffix}`);
       }
       lines.push("");
     }
 
-    // Accepted hybrids
+    lines.push("## Key Claims and Evidence");
+    lines.push("");
+    if (supportedClaims.length > 0) {
+      for (const claim of supportedClaims) {
+        lines.push(`- ${claim.text}`);
+        if (claim.evidence && claim.evidence.length > 0) {
+          lines.push(`  Evidence: ${claim.evidence.join("; ")}`);
+        }
+      }
+    }
     if (s.acceptedHybrids.length > 0) {
-      lines.push(`## Accepted Hybrids (${s.acceptedHybrids.length})`);
-      lines.push("");
       for (const hybrid of s.acceptedHybrids) {
-        lines.push(`- ${hybrid}`);
+        lines.push(`- Hybrid position: ${hybrid}`);
       }
-      lines.push("");
     }
+    if (supportedClaims.length === 0 && s.acceptedHybrids.length === 0) {
+      lines.push("- No strongly supported claims were established.");
+    }
+    lines.push("");
 
-    // Unresolved disagreements
+    lines.push("## Assumptions and Constraints");
+    lines.push("");
+    lines.push(`- Requested deliverable: ${manifest.taskContract.requestedDeliverable}`);
+    if (manifest.target) {
+      lines.push(`- Target context: ${manifest.target}`);
+    }
+    if (s.assumptions.length > 0) {
+      for (const assumption of s.assumptions) {
+        lines.push(`- Assumption: ${assumption}`);
+      }
+    } else {
+      lines.push("- Assumption: none surfaced");
+    }
+    if (manifest.taskContract.scopeHints.length > 0) {
+      for (const hint of manifest.taskContract.scopeHints) {
+        lines.push(`- Scope hint: ${hint}`);
+      }
+    } else {
+      lines.push("- Scope hint: none captured");
+    }
+    if (manifest.taskContract.constraints.length > 0) {
+      for (const constraint of manifest.taskContract.constraints) {
+        lines.push(`- Constraint: ${constraint}`);
+      }
+    } else {
+      lines.push("- Constraint: none captured");
+    }
+    lines.push("");
+
+    lines.push("## Unresolved Questions");
+    lines.push("");
+    if (s.conditionalAgreements.length > 0) {
+      for (const agreement of s.conditionalAgreements) {
+        lines.push(`- Conditional agreement: ${agreement}`);
+      }
+    }
+    if (openIssues.length > 0) {
+      for (const issue of openIssues) {
+        const detail =
+          issue.description && issue.description !== issue.title
+            ? ` — ${issue.description}`
+            : "";
+        lines.push(`- ${issue.title}${detail}`);
+      }
+    }
+    if (s.conditionalAgreements.length === 0 && openIssues.length === 0) {
+      lines.push("- No explicit open questions were captured.");
+    }
+    lines.push("");
+
     if (s.unresolvedDisagreements.length > 0) {
-      lines.push(`## Unresolved Disagreements (${s.unresolvedDisagreements.length})`);
+      lines.push("## Labeled Disagreements");
       lines.push("");
-      for (const d of s.unresolvedDisagreements) {
-        lines.push(`### ${d.title}`);
+      for (const disagreement of s.unresolvedDisagreements) {
+        lines.push(`### ${disagreement.title}`);
         lines.push("");
-        lines.push(`**Reason:** ${d.reason}`);
+        lines.push(`Reason: ${disagreement.reason}`);
         lines.push("");
-        for (const [adapter, position] of Object.entries(d.positions)) {
-          lines.push(`- **${adapter}:** ${position}`);
+        for (const [adapter, position] of Object.entries(disagreement.positions)) {
+          lines.push(`- ${adapter}: ${position}`);
         }
         lines.push("");
       }
     }
 
-    // Ratification votes
-    lines.push("## Ratification Votes");
+    lines.push("## Recommended Next Actions");
     lines.push("");
-    for (const vote of votes) {
-      const icon = vote.outcome === "approved" ? "[approved]" : "[BLOCKED]";
-      lines.push(`- **${vote.adapterId}:** ${icon}`);
-      if (vote.objections && vote.objections.length > 0) {
-        for (const obj of vote.objections) {
-          lines.push(`  - Objection: ${obj}`);
-        }
-      }
-      if (vote.requestedEdits && vote.requestedEdits.length > 0) {
-        for (const edit of vote.requestedEdits) {
-          lines.push(`  - Requested edit: ${edit}`);
-        }
-      }
+    for (const action of nextActions) {
+      lines.push(`- ${action}`);
     }
     lines.push("");
 
-    // Run summary
-    lines.push("## Run Summary");
+    lines.push("## Ratification and Run Notes");
     lines.push("");
-    lines.push(`- **Claims processed:** ${claims.length}`);
-    lines.push(`- **Issues raised:** ${issues.length}`);
-    lines.push(`- **Phases completed:** ${manifest.phases.filter(p => p.status === "completed").length}/${manifest.phases.length}`);
+    lines.push(`- Ratification status: ${synthesis.ratified ? "ratified" : "not fully ratified"}`);
+    lines.push(`- Claims processed: ${claims.length}`);
+    lines.push(`- Issues raised: ${issues.length}`);
+    lines.push(
+      `- Phases completed cleanly: ${
+        manifest.phases.filter((phase) => phase.status === "completed").length
+      }/${manifest.phases.length}`
+    );
+    const partialPhases = manifest.phases.filter((phase) => phase.status === "partial");
+    if (partialPhases.length > 0) {
+      lines.push(
+        `- Partially completed phases: ${partialPhases.map((phase) => phase.phase).join(", ")}`
+      );
+    }
     if (manifest.startedAt && manifest.completedAt) {
-      const durationMs = new Date(manifest.completedAt).getTime() - new Date(manifest.startedAt).getTime();
+      const durationMs =
+        new Date(manifest.completedAt).getTime() -
+        new Date(manifest.startedAt).getTime();
       const durationMin = (durationMs / 60000).toFixed(1);
-      lines.push(`- **Duration:** ${durationMin} minutes`);
+      lines.push(`- Duration: ${durationMin} minutes`);
+    }
+    for (const vote of votes) {
+      lines.push(
+        `- ${vote.adapterId}: ${vote.outcome}${
+          vote.objections && vote.objections.length > 0
+            ? ` (${vote.objections.join("; ")})`
+            : ""
+        }`
+      );
     }
     lines.push("");
 
-    // Methodology note
     lines.push("---");
     lines.push("");
     lines.push("*Generated by [Conclave](https://github.com/diegocalderon-dev/conclave) — a protocol-driven deliberation orchestrator.*");
@@ -272,4 +347,45 @@ export class ArtifactStore {
 
 function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+}
+
+function deriveNextActions(
+  manifest: RunManifest,
+  synthesis: FinalSynthesis,
+  openIssues: Issue[]
+): string[] {
+  const actions: string[] = [];
+
+  if (
+    synthesis.synthesis.agreedPoints.length > 0 ||
+    synthesis.synthesis.acceptedHybrids.length > 0
+  ) {
+    actions.push(
+      `Use the supported points above as the current basis for the requested deliverable: ${manifest.taskContract.requestedDeliverable}.`
+    );
+  }
+
+  if (openIssues.length > 0) {
+    actions.push(
+      "Resolve the remaining open questions before treating this deliverable as complete."
+    );
+  }
+
+  if (synthesis.synthesis.unresolvedDisagreements.length > 0) {
+    actions.push(
+      "Review the labeled disagreements and decide whether to gather more evidence, narrow scope, or accept the tradeoff explicitly."
+    );
+  }
+
+  if (!synthesis.ratified) {
+    actions.push(
+      "Treat this output as a working draft until the blocking ratification objections are addressed."
+    );
+  }
+
+  if (actions.length === 0) {
+    actions.push("Use this ratified deliverable as the current working baseline.");
+  }
+
+  return actions;
 }

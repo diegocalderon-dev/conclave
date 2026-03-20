@@ -5,7 +5,7 @@
 # artifact_root = "~/.conclave/artifacts"
 
 # Default depth profile: low | medium | high | exhaustive
-depth = "medium"
+depth = "low"
 
 # Default autonomy mode: supervised | autonomous
 autonomy = "supervised"

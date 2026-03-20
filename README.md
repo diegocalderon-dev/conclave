@@ -25,7 +25,22 @@ bun install
 bun run doctor
 
 # Run a deliberation
-bun run dev -- run --task "Refactor the auth module to use JWT" --depth medium
+bun run dev -- run -t "Refactor the auth module to use JWT" -d medium
+```
+
+### Without cloning the repo
+
+You can run Conclave directly with `bunx` (no clone needed):
+
+```bash
+bunx conclave run -t "Design a caching strategy" -d low
+```
+
+Or install it globally:
+
+```bash
+bun install -g .   # from inside the cloned repo
+conclave run -t "Design a caching strategy"
 ```
 
 ## CLI Commands
@@ -38,19 +53,42 @@ bun run dev -- run --task "Refactor the auth module to use JWT" --depth medium
 
 ## Run Options
 
-| Flag               | Required | Default                    | Description                                                  |
-|--------------------|----------|----------------------------|--------------------------------------------------------------|
-| `--task`           | **Yes**  | —                          | The task or question to deliberate.                          |
-| `--target`         | No       | `"default"`                | Target workspace or topic context.                           |
-| `--depth`          | No       | `medium`                   | Depth profile: `low`, `medium`, `high`, or `exhaustive`.     |
-| `--autonomy`       | No       | `supervised`               | Autonomy mode: `supervised` or `autonomous`.                 |
-| `--transcripts`    | No       | `summary`                  | Transcript retention: `none`, `summary`, or `full`.          |
-| `--artifact-root`  | No       | `~/.conclave/artifacts`    | Directory for storing run artifacts.                         |
-| `--adapters`       | No       | `claude,codex`             | Comma-separated list of adapters to use.                     |
-| `--dry-run`        | No       | `false`                    | Simulate the run without invoking adapters.                  |
-| `--config`         | No       | `./conclave.toml`          | Path to a project config file.                               |
+| Short | Long               | Required | Default                    | Description                                          |
+|-------|--------------------|----------|----------------------------|------------------------------------------------------|
+| `-t`  | `--task`           | **Yes**  | --                         | The task or question to deliberate.                  |
+| `-T`  | `--target`         | No       | --                         | Label for this deliberation context (used as the folder name under artifact root). Omit for one-off runs. |
+| `-d`  | `--depth`          | No       | `medium`                   | How thorough the deliberation should be. See [Depth profiles](#depth-profiles). |
+| `-a`  | `--autonomy`       | No       | `supervised`               | `supervised`: normal run. `autonomous`: no human checkpoints. |
+|       | `--transcripts`    | No       | `summary`                  | What to keep from raw adapter output. See [Transcript retention](#transcript-retention). |
+| `-o`  | `--artifact-root`  | No       | `~/.conclave/artifacts`    | Where run output is stored.                          |
+|       | `--adapters`       | No       | `claude,codex`             | Which adapters to use. Comma-separated.              |
+| `-n`  | `--dry-run`        | No       | `false`                    | Simulate the full protocol with synthetic data, without calling any adapter. Useful for testing config and verifying the artifact pipeline. |
+| `-c`  | `--config`         | No       | `./conclave.toml`          | Path to a project config file.                       |
 
 `--task` is the only required flag. Everything else has sensible defaults.
+
+### Depth profiles
+
+Depth controls how many rounds of deliberation run and which lane types are activated.
+
+| Profile      | Rounds | Lanes used                                                    | When to use                               |
+|-------------|--------|---------------------------------------------------------------|-------------------------------------------|
+| `low`       | up to 2 | independent draft, atomic claim                              | Quick sanity check. ~5-10 min.            |
+| `medium`    | up to 4 | + issue debate                                                | Default. Good balance of depth and speed. |
+| `high`      | up to 6 | + hybrid editing                                              | Important decisions worth more iteration. |
+| `exhaustive`| up to 10| + contrarian / minority report                               | Maximum rigor. Expect longer runs.        |
+
+Higher depth means more rounds, more lane types, and higher tolerance before stagnation stops the run.
+
+### Transcript retention
+
+Controls what is saved from raw adapter output alongside the canonical artifacts.
+
+| Value     | What is kept                                          |
+|-----------|-------------------------------------------------------|
+| `none`    | Only canonical artifacts. No raw output saved.        |
+| `summary` | Canonical artifacts + raw output per phase. Default.  |
+| `full`    | Everything, including intermediate round outputs.     |
 
 ## Architecture Overview
 
@@ -71,7 +109,7 @@ Work is distributed across **5 lane types**:
 - **Hybrid Edit** -- One agent edits another's draft with tracked changes.
 - **Contrarian** -- An agent is assigned to challenge the emerging consensus.
 
-Agents are accessed through an **adapter model**. Each adapter implements `detect` (check availability) and `invoke` (run a prompt and return structured output). This keeps the core protocol independent of any specific agent CLI.
+Agents are accessed through an **adapter model**. Each adapter implements `detect` (check availability) and `invoke` (run a prompt and return structured output). This keeps the core protocol independent of any specific agent CLI. See [Adding your own adapter](#adding-your-own-adapter).
 
 ## Configuration
 
@@ -79,25 +117,37 @@ Every flag can also be set via TOML config files, so you don't need to pass them
 
 **Config files** (checked in order, later values override earlier):
 
-1. `~/.conclave/config.toml` — user-level defaults
-2. `./conclave.toml` (or path from `--config`) — project-level overrides
-3. CLI flags — highest precedence, always wins
+1. `~/.conclave/config.toml` -- user-level defaults
+2. `./conclave.toml` (or path from `--config`) -- project-level overrides
+3. CLI flags -- highest precedence, always wins
 
 See `conclave.toml.example` for a full annotated reference.
 
 **Built-in defaults:**
 
-| Setting                | Default                  |
-|------------------------|--------------------------|
-| `depth`                | `medium`                 |
-| `autonomy`             | `supervised`             |
-| `transcript_retention` | `summary`                |
-| `artifact_root`        | `~/.conclave/artifacts`  |
-| `lanes.enabled`        | all 5 lane types         |
-| `lanes.max_parallel`   | `2`                      |
-| `limits.max_rounds`    | `6`                      |
-| `limits.stagnation_threshold` | `2`               |
-| `limits.max_claims`    | `50`                     |
+| Setting                       | Default                  |
+|-------------------------------|--------------------------|
+| `depth`                       | `medium`                 |
+| `autonomy`                    | `supervised`             |
+| `transcript_retention`        | `summary`                |
+| `artifact_root`               | `~/.conclave/artifacts`  |
+| `lanes.enabled`               | all 5 lane types         |
+| `lanes.max_parallel`          | `2`                      |
+| `limits.max_rounds`           | `6`                      |
+| `limits.stagnation_threshold` | `2`                      |
+| `limits.max_claims`           | `50`                     |
+
+## Adding your own adapter
+
+Conclave ships with adapters for Claude Code and Codex, but the adapter contract is open. To add a new one:
+
+1. Implement the `Adapter` interface in `src/adapters/your-adapter/adapter.ts`:
+   - `detect()` -- return capabilities (is the CLI installed? does it support non-interactive mode?)
+   - `invoke(prompt, options)` -- submit a prompt and return the output
+2. Register it in `src/adapters/index.ts`
+3. Add a config section in `conclave.toml`
+
+See [docs/adapter-contract.md](docs/adapter-contract.md) for the full interface specification.
 
 ## Stack
 

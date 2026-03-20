@@ -16,19 +16,19 @@ USAGE:
   conclave help                Show this help
 
 RUN OPTIONS:
-  --task <text>                Task or question to deliberate (required)
-  --target <text>              Target workspace or topic context
-  --depth <profile>            Depth: low | medium | high | exhaustive (default: medium)
-  --autonomy <mode>            Mode: supervised | autonomous (default: supervised)
-  --transcripts <policy>       Transcripts: none | summary | full (default: summary)
-  --artifact-root <path>       Override artifact storage location
-  --adapters <list>            Comma-separated adapter list (default: claude,codex)
-  --dry-run                    Simulate without invoking adapters
-  --config <path>              Path to config file
+  -t, --task <text>            Task or question to deliberate (required)
+  -T, --target <text>          Target workspace or topic context
+  -d, --depth <profile>        Depth: low | medium | high | exhaustive (default: medium)
+  -a, --autonomy <mode>        Mode: supervised | autonomous (default: supervised)
+      --transcripts <policy>   Transcripts: none | summary | full (default: summary)
+  -o, --artifact-root <path>   Override artifact storage location
+      --adapters <list>        Comma-separated adapter list (default: claude,codex)
+  -n, --dry-run                Simulate without invoking adapters
+  -c, --config <path>          Path to config file
 
 EXAMPLES:
-  conclave run --task "Design a caching strategy" --depth high
-  conclave run --task "Review auth approach" --target ~/dev/myapp --dry-run
+  conclave run -t "Design a caching strategy" -d high
+  conclave run -t "Review auth approach" -T ~/dev/myapp -n
   conclave doctor
 `;
 
@@ -95,15 +95,15 @@ async function runDeliberation(args: string[]) {
   const { values } = parseArgs({
     args,
     options: {
-      task: { type: "string" },
-      target: { type: "string" },
-      depth: { type: "string" },
-      autonomy: { type: "string" },
+      task: { type: "string", short: "t" },
+      target: { type: "string", short: "T" },
+      depth: { type: "string", short: "d" },
+      autonomy: { type: "string", short: "a" },
       transcripts: { type: "string" },
-      "artifact-root": { type: "string" },
+      "artifact-root": { type: "string", short: "o" },
       adapters: { type: "string" },
-      "dry-run": { type: "boolean", default: false },
-      config: { type: "string" },
+      "dry-run": { type: "boolean", default: false, short: "n" },
+      config: { type: "string", short: "c" },
     },
     strict: false,
   });

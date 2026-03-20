@@ -148,25 +148,57 @@ async function runDeliberation(args: string[]) {
     dryRun: values["dry-run"] as boolean,
   });
 
-  // Print summary
-  console.log("\n═══ Conclave Run Complete ═══");
-  console.log(`Run ID:     ${result.runId}`);
-  console.log(`Artifacts:  ${result.artifactDir}`);
+  // Print terminal summary
+  console.log("\n═══ Conclave Run Complete ═══\n");
+  console.log(`Run ID:   ${result.runId}`);
   console.log(
-    `Ratified:   ${result.finalSynthesis?.ratified ? "Yes" : "No (with labeled disagreements)"}`
+    `Verdict:  ${result.finalSynthesis?.ratified ? "Ratified" : "Synthesis with unresolved disagreements"}`
   );
+
+  if (result.finalSynthesis) {
+    const s = result.finalSynthesis.synthesis;
+
+    if (s.agreedPoints.length > 0) {
+      console.log(`\nAgreed (${s.agreedPoints.length}):`);
+      for (const point of s.agreedPoints.slice(0, 10)) {
+        console.log(`  + ${point}`);
+      }
+      if (s.agreedPoints.length > 10) {
+        console.log(`  ... and ${s.agreedPoints.length - 10} more`);
+      }
+    }
+
+    if (s.acceptedHybrids.length > 0) {
+      console.log(`\nHybrids (${s.acceptedHybrids.length}):`);
+      for (const h of s.acceptedHybrids) {
+        console.log(`  ~ ${h}`);
+      }
+    }
+
+    if (s.unresolvedDisagreements.length > 0) {
+      console.log(`\nUnresolved (${s.unresolvedDisagreements.length}):`);
+      for (const d of s.unresolvedDisagreements) {
+        console.log(`  ? ${d.title}`);
+      }
+    }
+
+    // Votes
+    console.log("\nVotes:");
+    for (const v of result.finalSynthesis.ratificationVotes) {
+      const icon = v.outcome === "approved" ? "+" : "!";
+      console.log(`  ${icon} ${v.adapterId}: ${v.outcome}`);
+    }
+  }
+
   if (result.errors.length > 0) {
     console.log(`\nErrors (${result.errors.length}):`);
     for (const e of result.errors) {
       console.log(`  - ${e}`);
     }
   }
-  if (result.finalSynthesis) {
-    const s = result.finalSynthesis.synthesis;
-    console.log(`\nAgreed points: ${s.agreedPoints.length}`);
-    console.log(`Unresolved:    ${s.unresolvedDisagreements.length}`);
-    console.log(`Hybrids:       ${s.acceptedHybrids.length}`);
-  }
+
+  console.log(`\nFull synthesis: ${result.artifactDir}/synthesis.md`);
+  console.log(`All artifacts:  ${result.artifactDir}/`);
   console.log();
 }
 

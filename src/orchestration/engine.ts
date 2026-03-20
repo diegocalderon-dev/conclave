@@ -353,6 +353,8 @@ export async function executeRun(input: RunInput): Promise<RunResult> {
 
     manifest.completedAt = new Date().toISOString();
     store.saveManifest(manifest);
+    store.saveReadme(manifest);
+    store.saveSynthesisMarkdown(manifest, finalSynthesis, claims, issues, []);
 
     log(`Dry run complete. Artifacts: ${store.getRunDir()}`);
 
@@ -730,6 +732,8 @@ export async function executeRun(input: RunInput): Promise<RunResult> {
   store.saveFinalSynthesis(finalSynthesis);
   manifest.completedAt = new Date().toISOString();
   store.saveManifest(manifest);
+  store.saveReadme(manifest);
+  store.saveSynthesisMarkdown(manifest, finalSynthesis, claims, issues, votes);
 
   completePhase(
     p6,

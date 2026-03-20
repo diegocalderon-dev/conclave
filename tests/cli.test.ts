@@ -226,6 +226,11 @@ describe("promptForTask", () => {
   test("submits on Enter and inserts new lines on Shift+Enter in raw mode", async () => {
     const input = new TtyPassThrough();
     const output = new PassThrough();
+    let transcript = "";
+
+    output.on("data", (chunk) => {
+      transcript += chunk.toString();
+    });
 
     const pending = promptForTask({ input, output });
     input.write("Investigate interactive mode");
@@ -237,6 +242,88 @@ describe("promptForTask", () => {
       "Investigate interactive mode\nAdd a regression test"
     );
     expect(input.rawModeHistory).toEqual([true, false]);
+    expect(transcript).toContain("\x1b[?2004h");
+    expect(transcript).toContain("\x1b[>1u");
+    expect(transcript).toContain("\x1b[>4;2m");
+    expect(transcript).toContain("\x1b[>4m");
+    expect(transcript).toContain("\x1b[<u");
+    expect(transcript).toContain("\x1b[?2004l");
+  });
+
+  test("accepts Shift+Enter from xterm modifyOtherKeys", async () => {
+    const input = new TtyPassThrough();
+    const output = new PassThrough();
+
+    const pending = promptForTask({ input, output });
+    input.write("Investigate interactive mode");
+    input.write("\x1b[27;2;13~");
+    input.write("Add a regression test");
+    input.write("\r");
+
+    expect(await pending).toBe(
+      "Investigate interactive mode\nAdd a regression test"
+    );
+  });
+
+  test("uses Ctrl+J as a raw-mode newline fallback", async () => {
+    const input = new TtyPassThrough();
+    const output = new PassThrough();
+
+    const pending = promptForTask({ input, output });
+    input.write("Investigate interactive mode");
+    input.write("\n");
+    input.write("Add a regression test");
+    input.write("\r");
+
+    expect(await pending).toBe(
+      "Investigate interactive mode\nAdd a regression test"
+    );
+  });
+
+  test("recognizes Ctrl+C and Ctrl+D when the terminal encodes modified keys", async () => {
+    const cancelledInput = new TtyPassThrough();
+    const cancelledOutput = new PassThrough();
+
+    const cancelled = promptForTask({ input: cancelledInput, output: cancelledOutput });
+    cancelledInput.write("Investigate interactive mode");
+    cancelledInput.write("\x1b[99;5u");
+
+    expect(await cancelled).toBeNull();
+
+    const submittedInput = new TtyPassThrough();
+    const submittedOutput = new PassThrough();
+
+    const submitted = promptForTask({
+      input: submittedInput,
+      output: submittedOutput,
+    });
+    submittedInput.write("Investigate interactive mode");
+    submittedInput.write("\x1b[100;5u");
+
+    expect(await submitted).toBe("Investigate interactive mode");
+  });
+
+  test("recognizes xterm-encoded Ctrl+C and Ctrl+D when modifyOtherKeys is enabled", async () => {
+    const cancelledInput = new TtyPassThrough();
+    const cancelledOutput = new PassThrough();
+
+    const cancelled = promptForTask({ input: cancelledInput, output: cancelledOutput });
+    cancelledInput.write("Investigate interactive mode");
+    cancelledInput.write("\x1b[27;5;99~");
+
+    expect(await cancelled).toBeNull();
+
+    const submittedInput = new TtyPassThrough();
+    const submittedOutput = new PassThrough();
+
+    const submitted = promptForTask({
+      input: submittedInput,
+      output: submittedOutput,
+    });
+    submittedInput.write("Investigate interactive mode");
+    submittedInput.write("\x1b[27;5;100~");
+
+    expect(await submitted).toBe("Investigate interactive mode");
   });
 
   test("returns null when cancelled in raw mode", async () => {

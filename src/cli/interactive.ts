@@ -15,9 +15,17 @@ type RawModeReadable = NodeJS.ReadableStream & {
   setRawMode?: (mode: boolean) => void;
 };
 
-const SHIFT_ENTER_SEQUENCES = ["\x1b[13;2u", "\x1b[27;2;13~"];
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
+const BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
+const BRACKETED_PASTE_DISABLE = "\x1b[?2004l";
+const KITTY_KEYBOARD_ENABLE = "\x1b[>1u";
+const KITTY_KEYBOARD_DISABLE = "\x1b[<u";
+const XTERM_MODIFY_OTHER_KEYS_ENABLE = "\x1b[>4;2m";
+const XTERM_MODIFY_OTHER_KEYS_DISABLE = "\x1b[>4m";
+const SHIFT_MODIFIER = 0b1;
+const ALT_MODIFIER = 0b10;
+const CTRL_MODIFIER = 0b100;
 
 function trimEmptyBoundaryLines(lines: string[]): string[] {
   let start = 0;
@@ -105,6 +113,80 @@ function trailingPrefixLength(value: string, target: string): number {
   return 0;
 }
 
+function isPartialNumericCsiSequence(value: string): boolean {
+  return /^\x1b\[\d*(?:;[0-9:]*)*$/u.test(value);
+}
+
+function decodeModifierBits(value: string | undefined): number {
+  const modifierToken = value?.split(":")[0] ?? "1";
+  const modifierValue = Number.parseInt(modifierToken, 10);
+  if (!Number.isFinite(modifierValue) || modifierValue <= 0) {
+    return 0;
+  }
+
+  return modifierValue - 1;
+}
+
+type EncodedKey = {
+  sequence: string;
+  keyCode: number;
+  modifierBits: number;
+};
+
+function parseEncodedKey(value: string): EncodedKey | null {
+  const csiUMatch = value.match(/^\x1b\[(\d+)(?:;([0-9:]+))?(?:;[0-9:]+)*u/u);
+  if (csiUMatch) {
+    return {
+      sequence: csiUMatch[0],
+      keyCode: Number.parseInt(csiUMatch[1] ?? "", 10),
+      modifierBits: decodeModifierBits(csiUMatch[2]),
+    };
+  }
+
+  const xtermModifyOtherKeysMatch = value.match(/^\x1b\[27;([0-9:]+);(\d+)~/u);
+  if (xtermModifyOtherKeysMatch) {
+    return {
+      sequence: xtermModifyOtherKeysMatch[0],
+      keyCode: Number.parseInt(xtermModifyOtherKeysMatch[2] ?? "", 10),
+      modifierBits: decodeModifierBits(xtermModifyOtherKeysMatch[1]),
+    };
+  }
+
+  return null;
+}
+
+function getEncodedKeyAction(
+  encodedKey: EncodedKey
+): "newline" | "submit" | "cancel" | null {
+  const { keyCode, modifierBits } = encodedKey;
+
+  if (keyCode === 13 && (modifierBits & (SHIFT_MODIFIER | ALT_MODIFIER)) !== 0) {
+    return "newline";
+  }
+
+  if (keyCode === 99 && (modifierBits & CTRL_MODIFIER) !== 0) {
+    return "cancel";
+  }
+
+  if (keyCode === 100 && (modifierBits & CTRL_MODIFIER) !== 0) {
+    return "submit";
+  }
+
+  return null;
+}
+
+function enableTerminalInputModes(output: NodeJS.WritableStream): void {
+  output.write(BRACKETED_PASTE_ENABLE);
+  output.write(KITTY_KEYBOARD_ENABLE);
+  output.write(XTERM_MODIFY_OTHER_KEYS_ENABLE);
+}
+
+function disableTerminalInputModes(output: NodeJS.WritableStream): void {
+  output.write(XTERM_MODIFY_OTHER_KEYS_DISABLE);
+  output.write(KITTY_KEYBOARD_DISABLE);
+  output.write(BRACKETED_PASTE_DISABLE);
+}
+
 async function promptForTaskRaw(
   input: RawModeReadable,
   output: NodeJS.WritableStream,
@@ -136,7 +218,7 @@ async function promptForTaskRaw(
       input.off("data", handleData);
       input.off("end", handleEnd);
       input.off("error", handleError);
-      output.write("\x1b[?2004l");
+      disableTerminalInputModes(output);
       input.setRawMode?.(false);
       input.pause?.();
     };
@@ -207,18 +289,32 @@ async function promptForTaskRaw(
         if (
           BRACKETED_PASTE_START.startsWith(pending) ||
           BRACKETED_PASTE_END.startsWith(pending) ||
-          SHIFT_ENTER_SEQUENCES.some((sequence) => sequence.startsWith(pending))
+          isPartialNumericCsiSequence(pending)
         ) {
           break;
         }
 
-        const shiftEnterSequence = SHIFT_ENTER_SEQUENCES.find((sequence) =>
-          pending.startsWith(sequence)
-        );
-        if (shiftEnterSequence) {
-          taskBuffer += "\n";
-          pending = pending.slice(shiftEnterSequence.length);
-          needsRender = true;
+        const encodedKey = parseEncodedKey(pending);
+        if (encodedKey) {
+          const action = getEncodedKeyAction(encodedKey);
+          pending = pending.slice(encodedKey.sequence.length);
+
+          if (action === "newline") {
+            taskBuffer += "\n";
+            needsRender = true;
+            continue;
+          }
+
+          if (action === "submit") {
+            submit();
+            return;
+          }
+
+          if (action === "cancel") {
+            cancel();
+            return;
+          }
+
           continue;
         }
 
@@ -233,10 +329,17 @@ async function promptForTaskRaw(
           break;
         }
 
-        if (nextCharacter === "\r" || nextCharacter === "\n") {
+        if (nextCharacter === "\r") {
           pending = pending.slice(1);
           submit();
           return;
+        }
+
+        if (nextCharacter === "\n") {
+          taskBuffer += "\n";
+          pending = pending.slice(1);
+          needsRender = true;
+          continue;
         }
 
         if (nextCharacter === "\x03") {
@@ -346,7 +449,7 @@ async function promptForTaskRaw(
       output.write(intro);
     }
 
-    output.write("\x1b[?2004h");
+    enableTerminalInputModes(output);
     input.setRawMode?.(true);
     input.resume?.();
     render();
@@ -367,7 +470,7 @@ async function promptForTaskLineInput(
     prompt = "Task> ",
     continuationPrompt = "... ",
     emptyTaskMessage =
-      "Task cannot be empty. Enter at least one line, then press Shift+Enter for a new line, Enter to submit, or Ctrl+C to cancel.\n",
+      "Task cannot be empty. Enter at least one line, then press Shift+Enter for a new line, Enter to submit, Ctrl+J for a guaranteed line break, or Ctrl+C to cancel.\n",
   } = options;
 
   const rl = createInterface({ input, output });
@@ -421,7 +524,7 @@ export async function promptForTask(
     prompt = "Task> ",
     continuationPrompt = "... ",
     emptyTaskMessage =
-      "Task cannot be empty. Enter at least one line, then press Shift+Enter for a new line, Enter to submit, or Ctrl+C to cancel.\n",
+      "Task cannot be empty. Enter at least one line, then press Shift+Enter for a new line, Enter to submit, Ctrl+J for a guaranteed line break, or Ctrl+C to cancel.\n",
   } = options;
 
   if (supportsRawMode(input)) {

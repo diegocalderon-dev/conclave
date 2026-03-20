@@ -1,0 +1,225 @@
+import { describe, test, expect } from "bun:test";
+import { PassThrough } from "stream";
+import { runCli, type CliDependencies } from "../src/cli/index.js";
+import { promptForTask } from "../src/cli/interactive.js";
+import { getDefaultConfig } from "../src/config/index.js";
+import type {
+  Adapter,
+  AdapterCapabilities,
+  AdapterResponse,
+  ConclaveConfig,
+  RunManifest,
+} from "../src/core/types.js";
+import type { RunInput, RunResult } from "../src/orchestration/index.js";
+
+function createWriter() {
+  let value = "";
+
+  return {
+    writer: {
+      write(chunk: string) {
+        value += chunk;
+        return true;
+      },
+    },
+    text() {
+      return value;
+    },
+  };
+}
+
+function createAdapter(id: string): Adapter {
+  return {
+    id,
+    async detect(): Promise<AdapterCapabilities> {
+      return {
+        id,
+        name: id,
+        available: true,
+        command: id,
+        nonInteractiveSupported: true,
+        structuredOutputSupported: true,
+        features: [],
+      };
+    },
+    async invoke(): Promise<AdapterResponse> {
+      return {
+        content: "",
+        exitCode: 0,
+        durationMs: 0,
+      };
+    },
+  };
+}
+
+function createManifest(task: string): RunManifest {
+  return {
+    runId: "run-123",
+    task,
+    depth: "medium",
+    autonomy: "supervised",
+    transcriptRetention: "summary",
+    adapters: ["claude", "codex"],
+    activeLanes: [],
+    startedAt: "2026-03-20T00:00:00.000Z",
+    artifactRoot: "/tmp/conclave",
+    phases: [],
+  };
+}
+
+function createRunResult(task: string): RunResult {
+  return {
+    runId: "run-123",
+    artifactDir: "/tmp/conclave/default/run-123",
+    finalSynthesis: {
+      ratified: true,
+      ratificationVotes: [{ adapterId: "claude", outcome: "approved" }],
+      synthesis: {
+        version: 1,
+        agreedPoints: [`Handled task: ${task}`],
+        acceptedHybrids: [],
+        unresolvedDisagreements: [],
+        conditionalAgreements: [],
+        summary: "Synthetic result",
+      },
+      producedAt: "2026-03-20T00:00:00.000Z",
+    },
+    manifest: createManifest(task),
+    errors: [],
+  };
+}
+
+function createCliDeps(overrides: Partial<CliDependencies> = {}) {
+  const stdout = createWriter();
+  const stderr = createWriter();
+  const adapters = [createAdapter("claude"), createAdapter("codex")];
+  const executions: RunInput[] = [];
+  let promptedWith: string | undefined;
+
+  const deps: CliDependencies = {
+    stdout: stdout.writer,
+    stderr: stderr.writer,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    loadConfig(): ConclaveConfig {
+      return getDefaultConfig();
+    },
+    createAdapters() {
+      return adapters;
+    },
+    async detectAllAdapters(items) {
+      return items.map((adapter) => ({
+        id: adapter.id,
+        name: adapter.id,
+        available: true,
+        command: adapter.id,
+        nonInteractiveSupported: true,
+        structuredOutputSupported: true,
+        features: [],
+      }));
+    },
+    async executeRun(input) {
+      executions.push(input);
+      return createRunResult(input.task);
+    },
+    async promptForTask(options) {
+      promptedWith = options?.intro;
+      return "Interactive task";
+    },
+  };
+
+  Object.assign(deps, overrides);
+
+  return {
+    deps,
+    executions,
+    stdout,
+    stderr,
+    promptIntro() {
+      return promptedWith;
+    },
+  };
+}
+
+describe("runCli", () => {
+  test("enters interactive mode when invoked without arguments", async () => {
+    const { deps, executions, promptIntro } = createCliDeps();
+
+    const exitCode = await runCli([], deps);
+
+    expect(exitCode).toBe(0);
+    expect(promptIntro()).toContain("interactive mode");
+    expect(executions).toHaveLength(1);
+    expect(executions[0]?.task).toBe("Interactive task");
+  });
+
+  test("prompts for a task when `run` is missing --task in a TTY", async () => {
+    const { deps, executions, promptIntro } = createCliDeps();
+
+    const exitCode = await runCli(["run"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(promptIntro()).toContain("No task provided.");
+    expect(executions).toHaveLength(1);
+    expect(executions[0]?.task).toBe("Interactive task");
+  });
+
+  test("fails fast without a TTY when no task is available", async () => {
+    const { deps, executions, stdout, stderr } = createCliDeps({
+      stdinIsTTY: false,
+      stdoutIsTTY: false,
+    });
+
+    const exitCode = await runCli([], deps);
+
+    expect(exitCode).toBe(1);
+    expect(executions).toHaveLength(0);
+    expect(stderr.text()).toContain("interactive mode requires a TTY");
+    expect(stdout.text()).toContain("Usage: conclave run");
+  });
+
+  test("exits when the interactive prompt is cancelled", async () => {
+    const { deps, executions, stderr } = createCliDeps({
+      async promptForTask() {
+        return null;
+      },
+    });
+
+    const exitCode = await runCli(["run"], deps);
+
+    expect(exitCode).toBe(1);
+    expect(executions).toHaveLength(0);
+    expect(stderr.text()).toContain("No task provided. Exiting.");
+  });
+});
+
+describe("promptForTask", () => {
+  test("re-prompts until a non-empty task is provided", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+
+    output.on("data", (chunk) => {
+      transcript += chunk.toString();
+    });
+
+    const pending = promptForTask({ input, output, intro: "Intro\n" });
+    input.write("\n");
+    input.write("Build interactive mode\n");
+
+    const task = await pending;
+
+    expect(task).toBe("Build interactive mode");
+    expect(transcript).toContain("Task cannot be empty");
+  });
+
+  test("returns null on EOF", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+
+    const pending = promptForTask({ input, output });
+    input.end();
+
+    expect(await pending).toBeNull();
+  });
+});

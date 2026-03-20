@@ -24,13 +24,22 @@ bun install
 # Verify adapters are available and environment is healthy
 bun run doctor
 
-# Run a deliberation
+# Start interactive mode
+bun run dev
+
+# Or run a deliberation directly
 bun run dev -- run -t "Refactor the auth module to use JWT" -d medium
 ```
 
 ### Without cloning the repo
 
 You can run Conclave directly with `bunx` (no clone needed):
+
+```bash
+bunx conclave
+```
+
+Or pass the task inline:
 
 ```bash
 bunx conclave run -t "Design a caching strategy" -d low
@@ -40,13 +49,14 @@ Or install it globally:
 
 ```bash
 bun install -g .   # from inside the cloned repo
-conclave run -t "Design a caching strategy"
+conclave
 ```
 
 ## CLI Commands
 
 | Command  | Description                                         |
 |----------|-----------------------------------------------------|
+| `conclave` | Start interactive mode and wait for a task.       |
 | `run`    | Execute a deliberation against a task.              |
 | `doctor` | Check adapter availability and environment health.  |
 | `help`   | Show usage information.                             |
@@ -55,7 +65,7 @@ conclave run -t "Design a caching strategy"
 
 | Short | Long               | Required | Default                    | Description                                          |
 |-------|--------------------|----------|----------------------------|------------------------------------------------------|
-| `-t`  | `--task`           | **Yes**  | --                         | The task or question to deliberate.                  |
+| `-t`  | `--task`           | No in a TTY | --                      | The task or question to deliberate. If omitted in an interactive terminal, Conclave prompts for it. |
 | `-T`  | `--target`         | No       | --                         | Label for this deliberation context (used as the folder name under artifact root). Omit for one-off runs. |
 | `-d`  | `--depth`          | No       | `medium`                   | How thorough the deliberation should be. See [Depth profiles](#depth-profiles). |
 | `-a`  | `--autonomy`       | No       | `supervised`               | `supervised`: normal run. `autonomous`: no human checkpoints. |
@@ -65,7 +75,7 @@ conclave run -t "Design a caching strategy"
 | `-n`  | `--dry-run`        | No       | `false`                    | Simulate the full protocol with synthetic data, without calling any adapter. Useful for testing config and verifying the artifact pipeline. |
 | `-c`  | `--config`         | No       | `./conclave.toml`          | Path to a project config file.                       |
 
-`--task` is the only required flag. Everything else has sensible defaults.
+In non-interactive contexts, `--task` is required. In an interactive terminal, `conclave` and `conclave run` will prompt for it when omitted.
 
 ### Depth profiles
 

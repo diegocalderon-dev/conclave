@@ -34,6 +34,7 @@ export class ClaudeAdapter implements Adapter {
       prompt,
       "--output-format", "json",
       "--no-session-persistence",
+      "--append-system-prompt", "IMPORTANT: Always end your response with a text message summarizing your analysis. Never end on a tool call.",
     ];
 
     if (allowWrites) {
@@ -48,10 +49,13 @@ export class ClaudeAdapter implements Adapter {
     if (raw.exitCode === 0 && raw.content) {
       try {
         const envelope = JSON.parse(raw.content);
-        if (typeof envelope.result === "string") {
+        if (typeof envelope.result === "string" && envelope.result.length > 0) {
           return { ...raw, content: envelope.result };
         }
-        // If no .result field, return content as-is
+        // result is empty — Claude likely ended on a tool call
+        if (envelope.result === "" || envelope.result === null) {
+          return { ...raw, content: "", error: "empty-result: model ended on tool call without text summary" };
+        }
       } catch {
         // Not valid JSON — return raw content (may happen with non-json output)
       }

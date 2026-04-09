@@ -127,8 +127,9 @@ export async function run(
   // HITL loop
   let crossReviewCount = 0;
   while (true) {
-    const atLimit = crossReviewCount >= options.maxRounds;
-    const action = await hitlPrompt({ atLimit });
+    const roundsLeft = options.maxRounds - crossReviewCount;
+    const atLimit = roundsLeft <= 0;
+    const action = await hitlPrompt({ atLimit, roundsLeft });
 
     if (action === "accept") {
       session.status = "accepted";
@@ -204,8 +205,9 @@ export async function resumeSession(
 
   // HITL loop (same as run)
   while (true) {
-    const atLimit = crossReviewCount >= session.maxRounds;
-    const action = await hitlPrompt({ atLimit });
+    const roundsLeft = session.maxRounds - crossReviewCount;
+    const atLimit = roundsLeft <= 0;
+    const action = await hitlPrompt({ atLimit, roundsLeft });
 
     if (action === "accept") {
       session.status = "accepted";

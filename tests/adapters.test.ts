@@ -1,46 +1,83 @@
-import { describe, test, expect } from "bun:test";
-import { ClaudeAdapter } from "../src/adapters/claude/adapter.js";
-import { CodexAdapter } from "../src/adapters/codex/adapter.js";
+import { describe, expect, test } from "bun:test";
+import { runCommand, commandExists } from "../src/adapters/base.ts";
+import { ClaudeAdapter } from "../src/adapters/claude.ts";
+import { CodexAdapter } from "../src/adapters/codex.ts";
 
-describe("Adapter Capability Detection", () => {
-  test("claude adapter detects availability", async () => {
-    const adapter = new ClaudeAdapter();
-    const caps = await adapter.detect();
-    expect(caps.id).toBe("claude");
-    expect(caps.name).toBe("Claude Code");
-    // Available depends on environment — just verify structure
-    expect(typeof caps.available).toBe("boolean");
-    expect(typeof caps.nonInteractiveSupported).toBe("boolean");
-    expect(Array.isArray(caps.features)).toBe(true);
-    if (caps.available) {
-      expect(caps.features).toContain("non-interactive-print");
-      expect(caps.command).toBeTruthy();
-    }
+describe("runCommand", () => {
+  test("captures stdout from a simple command", async () => {
+    const result = await runCommand({ args: ["echo", "hello"] });
+    expect(result.content).toBe("hello");
+    expect(result.exitCode).toBe(0);
+    expect(result.error).toBeUndefined();
+    expect(result.durationMs).toBeGreaterThan(0);
   });
 
-  test("codex adapter detects availability", async () => {
-    const adapter = new CodexAdapter();
-    const caps = await adapter.detect();
-    expect(caps.id).toBe("codex");
-    expect(caps.name).toBe("Codex CLI");
-    expect(typeof caps.available).toBe("boolean");
-    if (caps.available) {
-      expect(caps.features).toContain("non-interactive-exec");
-      expect(caps.command).toBeTruthy();
-    }
+  test("captures non-zero exit code and stderr", async () => {
+    const result = await runCommand({ args: ["sh", "-c", "echo err >&2; exit 1"] });
+    expect(result.exitCode).toBe(1);
+    expect(result.error).toBe("err");
   });
 
-  test("adapter with missing command reports unavailable", async () => {
-    const adapter = new ClaudeAdapter({ command: "nonexistent-cli-tool-xyz" });
-    const caps = await adapter.detect();
-    expect(caps.available).toBe(false);
-    expect(caps.error).toBeTruthy();
+  test("returns empty-response error for commands with no output", async () => {
+    const result = await runCommand({ args: ["true"] });
+    expect(result.exitCode).toBe(0);
+    expect(result.error).toBe("empty-response");
+    expect(result.content).toBe("");
   });
 
-  test("codex adapter with missing command reports unavailable", async () => {
-    const adapter = new CodexAdapter({ command: "nonexistent-cli-tool-xyz" });
-    const caps = await adapter.detect();
-    expect(caps.available).toBe(false);
-    expect(caps.error).toBeTruthy();
+  test("kills process on timeout", async () => {
+    const result = await runCommand({
+      args: ["sleep", "10"],
+      timeout: 200,
+    });
+    expect(result.error).toBe("timeout");
+    expect(result.durationMs).toBeLessThan(1000);
+  });
+
+  test("respects cwd option", async () => {
+    const result = await runCommand({ args: ["pwd"], cwd: "/tmp" });
+    // macOS /tmp is a symlink to /private/tmp
+    expect(result.content).toMatch(/\/tmp/);
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+describe("commandExists", () => {
+  test("returns true for existing commands", async () => {
+    const result = await commandExists("echo");
+    expect(result.exists).toBe(true);
+  });
+
+  test("returns false for non-existent commands", async () => {
+    const result = await commandExists("nonexistent-command-xyz");
+    expect(result.exists).toBe(false);
+  });
+});
+
+describe("ClaudeAdapter", () => {
+  const adapter = new ClaudeAdapter();
+
+  test("detect returns available", async () => {
+    const result = await adapter.detect();
+    expect(result.available).toBe(true);
+    expect(result.version).toBeTruthy();
+  });
+
+  test("has correct name", () => {
+    expect(adapter.name).toBe("claude");
+  });
+});
+
+describe("CodexAdapter", () => {
+  const adapter = new CodexAdapter();
+
+  test("detect returns available", async () => {
+    const result = await adapter.detect();
+    expect(result.available).toBe(true);
+    expect(result.version).toBeTruthy();
+  });
+
+  test("has correct name", () => {
+    expect(adapter.name).toBe("codex");
   });
 });

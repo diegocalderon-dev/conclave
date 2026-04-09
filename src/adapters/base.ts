@@ -1,97 +1,91 @@
-/** Base adapter utilities shared by all adapters */
+import type { AdapterResponse } from "./types.ts";
 
-import type {
-  Adapter,
-  AdapterCapabilities,
-  AdapterResponse,
-  AdapterInvokeOptions,
-} from "../core/types.js";
+const DEFAULT_TIMEOUT = 300_000; // 5 minutes
 
-export async function detectCommand(
-  command: string
-): Promise<{ available: boolean; path?: string; version?: string }> {
-  try {
-    const proc = Bun.spawn(["which", command], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) return { available: false };
-
-    const path = (await new Response(proc.stdout).text()).trim();
-
-    // Try to get version
-    let version: string | undefined;
-    try {
-      const vProc = Bun.spawn([command, "--version"], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await vProc.exited;
-      version = (await new Response(vProc.stdout).text()).trim().split("\n")[0];
-    } catch {
-      // version detection is optional
-    }
-
-    return { available: true, path, version };
-  } catch {
-    return { available: false };
-  }
+export interface SpawnOptions {
+  args: string[];
+  cwd?: string;
+  timeout?: number;
+  stdin?: string;
 }
 
-export async function runCommand(
-  args: string[],
-  options: {
-    timeout?: number;
-    cwd?: string;
-    stdin?: string;
-  } = {}
-): Promise<AdapterResponse> {
+export async function runCommand(options: SpawnOptions): Promise<AdapterResponse> {
+  const { args, cwd, timeout = DEFAULT_TIMEOUT, stdin } = options;
   const start = Date.now();
+
+  const proc = Bun.spawn(args, {
+    cwd,
+    stdin: stdin ? "pipe" : "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (stdin && proc.stdin) {
+    proc.stdin.write(stdin);
+    proc.stdin.end();
+  }
+
+  const timer = setTimeout(() => {
+    proc.kill();
+  }, timeout);
+
   try {
-    const proc = Bun.spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
-      cwd: options.cwd,
-      stdin: options.stdin ? new Response(options.stdin).body! : undefined,
-    });
-
-    // Handle timeout
-    let timedOut = false;
-    const timeoutMs = options.timeout || 300_000; // 5 min default
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill();
-    }, timeoutMs);
-
     const exitCode = await proc.exited;
     clearTimeout(timer);
 
+    const durationMs = Date.now() - start;
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
-    const durationMs = Date.now() - start;
 
-    if (timedOut) {
+    // If we exceeded the timeout, the process was killed
+    if (durationMs >= timeout) {
       return {
-        content: stdout,
-        exitCode: -1,
+        content: stdout.trim(),
         durationMs,
-        error: `Command timed out after ${timeoutMs}ms`,
+        exitCode: exitCode ?? -1,
+        error: "timeout",
       };
     }
 
-    return {
-      content: stdout,
-      exitCode,
-      durationMs,
-      error: exitCode !== 0 ? stderr || `Exit code ${exitCode}` : undefined,
-    };
+    if (exitCode !== 0) {
+      return {
+        content: stdout.trim(),
+        durationMs,
+        exitCode,
+        error: stderr.trim() || `exit code ${exitCode}`,
+      };
+    }
+
+    const content = stdout.trim();
+    if (!content) {
+      return { content: "", durationMs, exitCode: 0, error: "empty-response" };
+    }
+
+    return { content, durationMs, exitCode: 0 };
   } catch (err) {
+    clearTimeout(timer);
     return {
       content: "",
-      exitCode: -1,
       durationMs: Date.now() - start,
+      exitCode: -1,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+export async function commandExists(command: string): Promise<{ exists: boolean; version?: string }> {
+  try {
+    const proc = Bun.spawn([command, "--version"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      const version = (await new Response(proc.stdout).text()).trim();
+      return { exists: true, version };
+    }
+    return { exists: false };
+  } catch {
+    return { exists: false };
   }
 }

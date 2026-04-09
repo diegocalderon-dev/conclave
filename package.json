@@ -1,26 +1,20 @@
 {
   "name": "conclave",
-  "version": "0.1.0",
-  "description": "Protocol-driven, model-agnostic deliberation orchestrator",
+  "version": "2.0.0",
   "type": "module",
-  "main": "src/cli/index.ts",
   "bin": {
-    "conclave": "src/cli/index.ts"
+    "conclave": "./src/cli.ts"
   },
   "scripts": {
-    "dev": "bun run src/cli/index.ts",
-    "build": "bun build src/cli/index.ts --outdir dist --target bun",
-    "typecheck": "bun x tsc --noEmit",
+    "start": "bun run src/cli.ts",
     "test": "bun test",
-    "lint": "bun x tsc --noEmit",
-    "smoke": "bun run src/cli/index.ts run --task 'test task' --depth low --dry-run",
-    "doctor": "bun run src/cli/index.ts doctor"
-  },
-  "dependencies": {
-    "@iarna/toml": "^2.2.5"
+    "doctor": "bun run src/cli.ts doctor",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.0",
-    "typescript": "^5.7.0"
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
   }
 }

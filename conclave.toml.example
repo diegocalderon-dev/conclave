@@ -1,35 +1,15 @@
 # Conclave configuration
-# Copy to conclave.toml and adjust for your environment.
+# Place as ./conclave.toml (project) or ~/.conclave/config.toml (user)
 
-# Where run artifacts are stored. Defaults to ~/.conclave/artifacts
-# artifact_root = "~/.conclave/artifacts"
-
-# Default depth profile: low | medium | high | exhaustive
-depth = "low"
-
-# Default autonomy mode: supervised | autonomous
-autonomy = "supervised"
-
-# Transcript retention: none | summary | full
-transcript_retention = "summary"
-
-[adapters]
-# Adapter-specific overrides. Omit to use auto-detection.
+artifact_root = "~/.conclave/artifacts"
+timeout = 300        # seconds, per adapter invocation
+max_rounds = 3       # cross-review rounds (hard limit)
+allow_writes = false  # read-only by default
 
 [adapters.claude]
-# command = "claude"
-# model = "sonnet"
+command = "claude"
+model = ""  # empty = adapter default
 
 [adapters.codex]
-# command = "codex"
-# model = "o3"
-
-[lanes]
-# Lane policy defaults
-# enabled = ["independent-draft", "atomic-claim", "issue-debate", "hybrid-edit", "contrarian"]
-# max_parallel = 2
-
-[limits]
-# max_rounds = 10
-# stagnation_threshold = 2
-# max_claims = 50
+command = "codex"
+model = ""

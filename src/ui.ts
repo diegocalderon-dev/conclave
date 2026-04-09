@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import type { AgentResult } from "./session.ts";
+import type { Step } from "./session.ts";
 
 export type HitlAction = "continue" | "accept" | "steer" | "quit";
 
@@ -18,134 +18,81 @@ const c = {
   cursorUp: "\x1b[A",
 };
 
-const W = 56; // default divider width
+const W = 56;
 const DIV = `${c.dim}${"─".repeat(W)}${c.reset}`;
+
+function agentLabel(agent: "claude" | "codex"): string {
+  return agent === "claude"
+    ? `${c.bold}${c.magenta}claude${c.reset}`
+    : `${c.bold}${c.green}codex${c.reset}`;
+}
 
 // ── Session header ────────────────────────────────────────────
 
-export function displaySessionHeader(task: string, maxRounds: number, workdir?: string): void {
+export function displaySessionHeader(task: string, maxSteps: number, workdir?: string): void {
   const wd = workdir ? ` ${c.dim}·${c.reset} ${c.dim}${workdir}${c.reset}` : "";
-  console.log(`\n${c.bold}conclave${c.reset}${wd} ${c.dim}·${c.reset} ${c.dim}${maxRounds} rounds${c.reset}`);
+  console.log(`\n${c.bold}conclave${c.reset}${wd} ${c.dim}·${c.reset} ${c.dim}${maxSteps} steps${c.reset}`);
   console.log(DIV);
   console.log();
 }
 
-// ── Progress tracking ─────────────────────────────────────────
-
-type AgentStatus = "running" | "done" | "error";
-
-interface ProgressState {
-  roundLabel: string;
-  startTime: number;
-  claude: { status: AgentStatus; durationMs?: number };
-  codex: { status: AgentStatus; durationMs?: number };
-}
-
-function agentLine(label: string, color: string, state: { status: AgentStatus; durationMs?: number }, elapsed: number): string {
-  if (state.status === "done") {
-    return `  ${label}  ${c.green}✓${c.reset} ${c.dim}${formatDuration(state.durationMs ?? 0)}${c.reset}`;
-  }
-  if (state.status === "error") {
-    return `  ${label}  ${c.red}✗${c.reset} ${c.dim}${formatDuration(state.durationMs ?? 0)}${c.reset}`;
-  }
-  return `  ${label}  ${c.yellow}●${c.reset} ${c.dim}${formatDuration(elapsed)}...${c.reset}`;
-}
-
-function drawProgress(state: ProgressState): void {
-  const elapsed = Date.now() - state.startTime;
-  const header = `${c.yellow}●${c.reset} ${c.bold}${state.roundLabel}${c.reset}  ${c.dim}[${formatDuration(elapsed)}]${c.reset}`;
-  const l1 = agentLine("claude", c.magenta, state.claude, elapsed);
-  const l2 = agentLine("codex ", c.green, state.codex, elapsed);
-
-  process.stderr.write(`${c.cursorUp}${c.clearLine}${c.cursorUp}${c.clearLine}${c.cursorUp}${c.clearLine}\r`);
-  process.stderr.write(`${header}\n${l1}\n${l2}\n`);
-}
+// ── Progress (single agent) ──────────────────────────────────
 
 export interface ProgressTracker {
-  markDone(agent: "claude" | "codex", durationMs: number): void;
-  markError(agent: "claude" | "codex", durationMs: number): void;
-  stop(): void;
+  stop(durationMs: number, isError: boolean): void;
 }
 
-export function startProgress(roundLabel: string): ProgressTracker {
-  const state: ProgressState = {
-    roundLabel,
-    startTime: Date.now(),
-    claude: { status: "running" },
-    codex: { status: "running" },
+export function startProgress(agent: "claude" | "codex", action: string): ProgressTracker {
+  const startTime = Date.now();
+  const label = agentLabel(agent);
+
+  const draw = () => {
+    const elapsed = formatDuration(Date.now() - startTime);
+    process.stderr.write(`${c.clearLine}\r${c.yellow}●${c.reset} ${label} ${c.dim}${action}${c.reset}  ${c.dim}${elapsed}...${c.reset}`);
   };
 
-  // Initial draw
-  const header = `${c.yellow}●${c.reset} ${c.bold}${roundLabel}${c.reset}  ${c.dim}[0s]${c.reset}`;
-  const l1 = agentLine("claude", c.magenta, state.claude, 0);
-  const l2 = agentLine("codex ", c.green, state.codex, 0);
-  process.stderr.write(`${header}\n${l1}\n${l2}\n`);
-
-  const interval = setInterval(() => drawProgress(state), 500);
+  draw();
+  const interval = setInterval(draw, 500);
 
   return {
-    markDone(agent, durationMs) {
-      state[agent] = { status: "done", durationMs };
-      drawProgress(state);
-    },
-    markError(agent, durationMs) {
-      state[agent] = { status: "error", durationMs };
-      drawProgress(state);
-    },
-    stop() {
+    stop(durationMs, isError) {
       clearInterval(interval);
-      // Clear progress lines after completion
-      process.stderr.write(`${c.cursorUp}${c.clearLine}${c.cursorUp}${c.clearLine}${c.cursorUp}${c.clearLine}\r`);
+      const icon = isError ? `${c.red}✗${c.reset}` : `${c.green}✓${c.reset}`;
+      process.stderr.write(`${c.clearLine}\r${icon} ${label} ${c.dim}${action}${c.reset}  ${c.dim}${formatDuration(durationMs)}${c.reset}\n`);
     },
   };
 }
 
-// ── Round display ─────────────────────────────────────────────
+// ── Step display ──────────────────────────────────────────────
 
-export function displayRound(
-  roundNumber: number,
-  maxRounds: number,
-  claude: AgentResult,
-  codex: AgentResult,
-  _sessionId: string,
-): void {
-  const roundType = roundNumber === 0 ? "independent analysis" : "cross-review";
-  const totalDuration = Math.max(claude.durationMs, codex.durationMs);
+export function displayStep(step: Step, stepsLeft: number): void {
+  const label = agentLabel(step.agent);
+  const time = `${c.dim}(${formatDuration(step.durationMs)})${c.reset}`;
+  const divLen = Math.max(0, W - 10 - step.agent.length - Math.ceil(step.durationMs / 1000).toString().length);
 
-  // Round header
-  console.log(`\n${c.bold}■ Round ${roundNumber}${c.reset}  ${c.dim}${roundType}${c.reset}  ${c.dim}${formatDuration(totalDuration)}${c.reset}`);
+  console.log(`\n${c.dim}──${c.reset} ${label} ${c.dim}${step.role}${c.reset} ${time} ${c.dim}${"─".repeat(divLen)}${c.reset}`);
 
-  // Claude
-  const claudeTime = `${c.dim}(${formatDuration(claude.durationMs)})${c.reset}`;
-  const claudeDivLen = Math.max(0, W - 12 - Math.ceil(claude.durationMs / 1000).toString().length);
-  console.log(`\n${c.dim}──${c.reset} ${c.bold}${c.magenta}claude${c.reset} ${claudeTime} ${c.dim}${"─".repeat(claudeDivLen)}${c.reset}`);
-  if (claude.error) {
-    console.log(`${c.red}[error: ${claude.error}]${c.reset}`);
+  if (step.error) {
+    console.log(`${c.red}[error: ${step.error}]${c.reset}`);
   }
-  console.log(claude.content || `${c.dim}(no output)${c.reset}`);
+  console.log(step.content || `${c.dim}(no output)${c.reset}`);
 
-  // Codex
-  const codexTime = `${c.dim}(${formatDuration(codex.durationMs)})${c.reset}`;
-  const codexDivLen = Math.max(0, W - 11 - Math.ceil(codex.durationMs / 1000).toString().length);
-  console.log(`\n${c.dim}──${c.reset} ${c.bold}${c.green}codex${c.reset} ${codexTime} ${c.dim}${"─".repeat(codexDivLen)}${c.reset}`);
-  if (codex.error) {
-    console.log(`${c.red}[error: ${codex.error}]${c.reset}`);
+  if (step.steer) {
+    console.log(`\n${c.dim}steered: ${step.steer}${c.reset}`);
   }
-  console.log(codex.content || `${c.dim}(no output)${c.reset}`);
 
   console.log();
 }
 
 // ── HITL prompt ───────────────────────────────────────────────
 
-export async function hitlPrompt(options: { atLimit: boolean; roundsLeft: number }): Promise<HitlAction> {
+export async function hitlPrompt(options: { atLimit: boolean; stepsLeft: number }): Promise<HitlAction> {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
 
-  // Orientation: remind the user what actions mean in context
   const hint = options.atLimit
-    ? `${c.dim}accept the analyses above or quit${c.reset}`
-    : `${c.dim}continue to refine, accept as-is, steer with guidance, or quit${c.reset}`;
-  console.log(`${hint}`);
+    ? `${c.dim}accept the output above or quit${c.reset}`
+    : `${c.dim}continue the relay, accept as-is, steer with guidance, or quit${c.reset}`;
+  console.log(hint);
   console.log(DIV);
 
   const parts: string[] = [];
@@ -155,8 +102,8 @@ export async function hitlPrompt(options: { atLimit: boolean; roundsLeft: number
   parts.push(`${c.bold}q${c.reset}uit`);
 
   const budget = options.atLimit
-    ? `${c.dim}(max rounds)${c.reset}`
-    : `${c.dim}(${options.roundsLeft} left)${c.reset}`;
+    ? `${c.dim}(max steps)${c.reset}`
+    : `${c.dim}(${options.stepsLeft} left)${c.reset}`;
 
   const prompt = `${parts.join("  ")}  ${budget} ${c.bold}▸${c.reset} `;
 
@@ -166,7 +113,7 @@ export async function hitlPrompt(options: { atLimit: boolean; roundsLeft: number
         const input = answer.trim().toLowerCase();
         if (input === "c" || input === "continue") {
           if (options.atLimit) {
-            process.stderr.write(`${c.red}Max rounds reached.${c.reset}\n`);
+            process.stderr.write(`${c.red}Max steps reached.${c.reset}\n`);
             ask();
             return;
           }

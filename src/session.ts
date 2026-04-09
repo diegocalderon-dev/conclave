@@ -3,16 +3,13 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { AdapterResponse } from "./adapters/types.ts";
 
-export interface AgentResult {
+export interface Step {
+  number: number;
+  agent: "claude" | "codex";
+  role: "analyze" | "review" | "refine";
   content: string;
   durationMs: number;
   error?: string;
-}
-
-export interface Round {
-  number: number;
-  claude: AgentResult;
-  codex: AgentResult;
   steer?: string;
 }
 
@@ -21,9 +18,9 @@ export interface Session {
   task: string;
   workdir?: string;
   repos?: string[];
-  rounds: Round[];
+  steps: Step[];
   status: "active" | "accepted" | "abandoned";
-  maxRounds: number;
+  maxSteps: number;
   startedAt: string;
   acceptedAt?: string;
 }
@@ -39,24 +36,28 @@ function generateId(): string {
   return `${ts}_${rand}`;
 }
 
-export function createSession(task: string, options: { workdir?: string; repos?: string[]; maxRounds: number }): Session {
+export function createSession(task: string, options: { workdir?: string; repos?: string[]; maxSteps: number }): Session {
   return {
     id: generateId(),
     task,
     workdir: options.workdir,
     repos: options.repos,
-    rounds: [],
+    steps: [],
     status: "active",
-    maxRounds: options.maxRounds,
+    maxSteps: options.maxSteps,
     startedAt: new Date().toISOString(),
   };
 }
 
-export function toAgentResult(response: AdapterResponse): AgentResult {
+export function toStep(response: AdapterResponse, number: number, agent: "claude" | "codex", role: "analyze" | "review" | "refine", steer?: string): Step {
   return {
+    number,
+    agent,
+    role,
     content: response.content,
     durationMs: response.durationMs,
     error: response.error,
+    steer,
   };
 }
 
@@ -75,7 +76,7 @@ export function loadSession(id: string, sessionDir?: string): Session | null {
   return JSON.parse(raw) as Session;
 }
 
-export function listSessions(sessionDir?: string): Array<{ id: string; task: string; status: string; startedAt: string; rounds: number }> {
+export function listSessions(sessionDir?: string): Array<{ id: string; task: string; status: string; startedAt: string; steps: number }> {
   const dir = sessionDir ?? defaultSessionDir();
   if (!existsSync(dir)) return [];
 
@@ -90,7 +91,7 @@ export function listSessions(sessionDir?: string): Array<{ id: string; task: str
           task: s.task.slice(0, 80),
           status: s.status,
           startedAt: s.startedAt,
-          rounds: s.rounds.length,
+          steps: s.steps.length,
         };
       } catch {
         return null;

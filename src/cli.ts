@@ -7,28 +7,30 @@ import { loadSession, listSessions } from "./session.ts";
 import { saveArtifact } from "./artifact.ts";
 import { displayCompletion } from "./ui.ts";
 
-const DEFAULT_MAX_ROUNDS = 3;
+const DEFAULT_MAX_STEPS = 6;
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes in ms
 
 function usage(): void {
   console.log(`conclave v2 — multi-agent analysis with HITL convergence
 
+Workflow: Claude analyzes → Codex reviews → Claude refines → Codex reviews → ...
+
 Usage:
   conclave <task>                              Start a session in cwd
   conclave --workdir <dir> <task>              Set agent working directory
   conclave --repo <url> <task>                 Pass repo URL(s) to agents (repeatable)
-  conclave --max-rounds <n> <task>             Hard budget (default: ${DEFAULT_MAX_ROUNDS})
+  conclave --max-steps <n> <task>              Hard budget after initial analysis (default: ${DEFAULT_MAX_STEPS})
   conclave --timeout <seconds> <task>          Per-adapter timeout (default: 300s)
   conclave --allow-writes <task>               Opt-in: remove read-only restrictions
-  conclave resume [session-id]                 Resume from last completed round
+  conclave resume [session-id]                 Resume from last completed step
   conclave doctor                              Verify adapter availability
   conclave list                                List past sessions
 
-HITL actions during a session:
-  [c]ontinue  Run another cross-review round
+HITL actions after each step:
+  [c]ontinue  Pass output to the next agent
   [a]ccept    Save final artifact and exit
-  [s]teer     Inject guidance for the next round
-  [q]uit      Abandon session (preserves all rounds)`);
+  [s]teer     Inject guidance for the next step
+  [q]uit      Abandon session (preserves all steps)`);
 }
 
 async function doctor(): Promise<void> {
@@ -68,15 +70,14 @@ async function list(): Promise<void> {
       : s.status === "abandoned"
         ? "\x1b[33m○\x1b[0m"
         : "\x1b[36m●\x1b[0m";
-    const rounds = `\x1b[2m${s.rounds} round${s.rounds !== 1 ? "s" : ""}\x1b[0m`;
-    console.log(`  ${icon} \x1b[1m${s.id}\x1b[0m  ${rounds}  ${s.task}`);
+    const steps = `\x1b[2m${s.steps} step${s.steps !== 1 ? "s" : ""}\x1b[0m`;
+    console.log(`  ${icon} \x1b[1m${s.id}\x1b[0m  ${steps}  ${s.task}`);
   }
   console.log();
 }
 
 async function resume(sessionId?: string): Promise<void> {
   if (!sessionId) {
-    // Pick the most recent active session
     const sessions = listSessions();
     const active = sessions.find((s) => s.status === "active");
     if (!active) {
@@ -101,7 +102,7 @@ async function resume(sessionId?: string): Promise<void> {
   const codex = new CodexAdapter();
 
   const finished = await resumeSession(claude, codex, session, {
-    maxRounds: session.maxRounds,
+    maxSteps: session.maxSteps,
     workdir: session.workdir,
     repos: session.repos,
   });
@@ -115,19 +116,19 @@ function parseArgs(argv: string[]): {
   task?: string;
   workdir?: string;
   repos: string[];
-  maxRounds: number;
+  maxSteps: number;
   timeout: number;
   allowWrites: boolean;
   sessionId?: string;
 } {
   const result = {
     repos: [] as string[],
-    maxRounds: DEFAULT_MAX_ROUNDS,
+    maxSteps: DEFAULT_MAX_STEPS,
     timeout: DEFAULT_TIMEOUT,
     allowWrites: false,
   } as ReturnType<typeof parseArgs>;
 
-  const args = argv.slice(2); // skip bun and script path
+  const args = argv.slice(2);
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -144,11 +145,11 @@ function parseArgs(argv: string[]): {
       case "--repo":
         result.repos.push(args[++i]!);
         break;
-      case "--max-rounds":
-        result.maxRounds = parseInt(args[++i]!, 10);
+      case "--max-steps":
+        result.maxSteps = parseInt(args[++i]!, 10);
         break;
       case "--timeout":
-        result.timeout = parseInt(args[++i]!, 10) * 1000; // convert seconds to ms
+        result.timeout = parseInt(args[++i]!, 10) * 1000;
         break;
       case "--allow-writes":
         result.allowWrites = true;
@@ -158,7 +159,6 @@ function parseArgs(argv: string[]): {
     }
   }
 
-  // Determine command vs task
   const first = positional[0];
   if (first === "doctor" || first === "list" || first === "resume") {
     result.command = first;
@@ -194,7 +194,6 @@ async function main(): Promise<void> {
   const claude = new ClaudeAdapter();
   const codex = new CodexAdapter();
 
-  // Verify adapters before starting
   const [claudeOk, codexOk] = await Promise.all([claude.detect(), codex.detect()]);
   if (!claudeOk.available) {
     console.error(`Claude CLI not available: ${claudeOk.error}`);
@@ -208,7 +207,7 @@ async function main(): Promise<void> {
   const session = await run(claude, codex, parsed.task, {
     workdir: parsed.workdir ?? process.cwd(),
     repos: parsed.repos.length > 0 ? parsed.repos : undefined,
-    maxRounds: parsed.maxRounds,
+    maxSteps: parsed.maxSteps,
     timeout: parsed.timeout,
     allowWrites: parsed.allowWrites,
   });

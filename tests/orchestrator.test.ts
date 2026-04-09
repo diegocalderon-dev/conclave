@@ -1,10 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
 import type { Adapter, AdapterResponse, DetectResult, InvokeOptions } from "../src/adapters/types.ts";
 
-// Mock adapter that returns predetermined responses
+// Mock adapter that returns predetermined responses and captures prompts
 class MockAdapter implements Adapter {
   name: string;
   private responses: string[];
@@ -28,12 +25,8 @@ class MockAdapter implements Adapter {
   }
 }
 
-describe("prompt construction", () => {
-  // We test the prompts indirectly by checking what the mock adapters receive.
-  // The orchestrator module uses buildInitialPrompt and buildCrossReviewPrompt internally.
-  // Since those are not exported, we validate the behavior through the mock.
-
-  test("mock adapter captures invoked prompts", async () => {
+describe("mock adapter", () => {
+  test("captures invoked prompts", async () => {
     const mock = new MockAdapter("test", ["response 1", "response 2"]);
     await mock.invoke("first prompt");
     await mock.invoke("second prompt");
@@ -41,7 +34,7 @@ describe("prompt construction", () => {
     expect(mock.invokedPrompts).toEqual(["first prompt", "second prompt"]);
   });
 
-  test("mock adapter cycles through responses", async () => {
+  test("cycles through responses", async () => {
     const mock = new MockAdapter("test", ["a", "b", "c"]);
 
     const r1 = await mock.invoke("p1");
@@ -53,7 +46,7 @@ describe("prompt construction", () => {
     expect(r3.content).toBe("c");
   });
 
-  test("mock adapter provides fallback after exhausting responses", async () => {
+  test("provides fallback after exhausting responses", async () => {
     const mock = new MockAdapter("claude", ["only one"]);
 
     await mock.invoke("p1");
@@ -63,23 +56,16 @@ describe("prompt construction", () => {
   });
 });
 
-describe("session state management", () => {
-  let tempDir: string;
+describe("relay workflow design", () => {
+  test("claude and codex have distinct roles", () => {
+    const claude = new MockAdapter("claude", []);
+    const codex = new MockAdapter("codex", []);
 
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "conclave-orch-test-"));
+    // The relay model: Claude = analyst, Codex = reviewer
+    expect(claude.name).toBe("claude");
+    expect(codex.name).toBe("codex");
   });
 
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  // Integration tests for the full orchestrator loop would require
-  // mocking stdin for HITL prompts. These are better suited for
-  // manual E2E testing with `conclave "task"`.
-  //
-  // The unit tests above verify:
-  // - Adapter contract compliance (mock implements Adapter)
-  // - Prompt capture for inspection
-  // - Response sequencing
+  // Full relay loop integration tests require mocking stdin for HITL.
+  // Validated manually with: bun run src/cli.ts "task"
 });

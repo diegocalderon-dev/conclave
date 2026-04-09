@@ -1,8 +1,8 @@
 import type { Adapter } from "./adapters/types.ts";
-import { createSession, persistSession, toAgentResult, type Session } from "./session.ts";
+import { createSession, persistSession, toStep, type Session } from "./session.ts";
 import {
   displayCompletion,
-  displayRound,
+  displayStep,
   displaySessionHeader,
   getSteerInput,
   hitlPrompt,
@@ -12,18 +12,16 @@ import {
 export interface RunOptions {
   workdir?: string;
   repos?: string[];
-  maxRounds: number;
+  maxSteps: number;
   timeout?: number;
   allowWrites?: boolean;
   sessionDir?: string;
 }
 
-function buildInitialPrompt(task: string, repos?: string[]): string {
-  let prompt = `You are participating in a multi-agent analysis.
+function buildAnalyzePrompt(task: string, repos?: string[]): string {
+  let prompt = `Task: ${task}
 
-Task: ${task}
-
-Produce your independent analysis. Be thorough but concise.
+Produce your analysis. Be thorough but concise.
 Structure your response with clear sections.
 Note assumptions, open questions, and confidence levels.`;
 
@@ -34,58 +32,54 @@ Note assumptions, open questions, and confidence levels.`;
   return prompt;
 }
 
-function buildCrossReviewPrompt(
-  task: string,
-  ownPrevious: string,
-  otherPrevious: string,
-  steer?: string,
-  repos?: string[],
-): string {
-  let prompt = `You are participating in a multi-agent analysis.
+function buildReviewPrompt(task: string, previousOutput: string, steer?: string): string {
+  let prompt = `Task: ${task}
 
-Task: ${task}
+The following analysis was produced:
+---
+${previousOutput}
+---`;
+
+  if (steer) {
+    prompt += `\n\nOperator guidance: ${steer}`;
+  }
+
+  prompt += `
+
+Review this analysis critically. Identify:
+- Strengths and valid points
+- Gaps, errors, or missing considerations
+- Specific improvements or alternative approaches
+
+Be constructive but thorough. Challenge weak reasoning.`;
+
+  return prompt;
+}
+
+function buildRefinePrompt(task: string, ownPrevious: string, reviewOutput: string, steer?: string): string {
+  let prompt = `Task: ${task}
 
 Your previous analysis:
 ---
 ${ownPrevious}
 ---
 
-The other agent's latest analysis:
+A review of your analysis:
 ---
-${otherPrevious}
+${reviewOutput}
 ---`;
 
   if (steer) {
-    prompt += `\n\nOperator guidance for this round: ${steer}`;
-  }
-
-  if (repos?.length) {
-    prompt += `\n\nRelevant repositories:\n${repos.map((r) => `- ${r}`).join("\n")}`;
+    prompt += `\n\nOperator guidance: ${steer}`;
   }
 
   prompt += `
 
-Compare both analyses. Identify agreements, disagreements (with reasoning),
-and produce a refined analysis incorporating the strongest elements from both.
-Be specific about what changed from your previous position and why.`;
+Address the review feedback. Refine your analysis incorporating valid
+criticisms and defending positions where the review was wrong.
+Be specific about what changed and why.`;
 
   return prompt;
-}
-
-async function invokeWithProgress(
-  adapter: Adapter,
-  prompt: string,
-  invokeOpts: { workdir?: string; timeout?: number; allowWrites?: boolean },
-  progress: ReturnType<typeof startProgress>,
-  agentKey: "claude" | "codex",
-) {
-  const result = await adapter.invoke(prompt, invokeOpts);
-  if (result.error) {
-    progress.markError(agentKey, result.durationMs);
-  } else {
-    progress.markDone(agentKey, result.durationMs);
-  }
-  return result;
 }
 
 export async function run(
@@ -97,10 +91,10 @@ export async function run(
   const session = createSession(task, {
     workdir: options.workdir,
     repos: options.repos,
-    maxRounds: options.maxRounds,
+    maxSteps: options.maxSteps,
   });
 
-  displaySessionHeader(task, options.maxRounds, options.workdir);
+  displaySessionHeader(task, options.maxSteps, options.workdir);
 
   const invokeOpts = {
     workdir: options.workdir,
@@ -108,28 +102,22 @@ export async function run(
     allowWrites: options.allowWrites,
   };
 
-  // Round 0: Independent drafts (parallel, with progress)
-  const progress0 = startProgress("Round 0 · Independent analysis");
-  const [resultA, resultB] = await Promise.all([
-    invokeWithProgress(claude, buildInitialPrompt(task, options.repos), invokeOpts, progress0, "claude"),
-    invokeWithProgress(codex, buildInitialPrompt(task, options.repos), invokeOpts, progress0, "codex"),
-  ]);
-  progress0.stop();
+  // Step 0: Claude initial analysis
+  const progress0 = startProgress("claude", "analyzing");
+  const result0 = await claude.invoke(buildAnalyzePrompt(task, options.repos), invokeOpts);
+  progress0.stop(result0.durationMs, !!result0.error);
 
-  session.rounds.push({
-    number: 0,
-    claude: toAgentResult(resultA),
-    codex: toAgentResult(resultB),
-  });
+  const step0 = toStep(result0, 0, "claude", "analyze");
+  session.steps.push(step0);
   persistSession(session, options.sessionDir);
-  displayRound(0, options.maxRounds, session.rounds[0]!.claude, session.rounds[0]!.codex, session.id);
+  displayStep(step0, options.maxSteps);
 
-  // HITL loop
-  let crossReviewCount = 0;
+  // Relay loop
+  let stepCount = 0; // steps after initial (budget counter)
   while (true) {
-    const roundsLeft = options.maxRounds - crossReviewCount;
-    const atLimit = roundsLeft <= 0;
-    const action = await hitlPrompt({ atLimit, roundsLeft });
+    const stepsLeft = options.maxSteps - stepCount;
+    const atLimit = stepsLeft <= 0;
+    const action = await hitlPrompt({ atLimit, stepsLeft });
 
     if (action === "accept") {
       session.status = "accepted";
@@ -142,40 +130,40 @@ export async function run(
     }
 
     const steer = action === "steer" ? await getSteerInput() : undefined;
-    const lastRound = session.rounds.at(-1)!;
-    crossReviewCount++;
+    const lastStep = session.steps.at(-1)!;
+    stepCount++;
+    const stepNumber = session.steps.length;
 
-    // Cross-review: each agent sees own prev + other's prev (parallel, with progress)
-    const progressN = startProgress(`Round ${crossReviewCount} · Cross-review`);
-    const [refinedA, refinedB] = await Promise.all([
-      invokeWithProgress(
-        claude,
-        buildCrossReviewPrompt(task, lastRound.claude.content, lastRound.codex.content, steer, options.repos),
+    if (lastStep.agent === "claude") {
+      // Next: Codex reviews
+      const progress = startProgress("codex", "reviewing");
+      const result = await codex.invoke(
+        buildReviewPrompt(task, lastStep.content, steer),
         invokeOpts,
-        progressN,
-        "claude",
-      ),
-      invokeWithProgress(
-        codex,
-        buildCrossReviewPrompt(task, lastRound.codex.content, lastRound.claude.content, steer, options.repos),
-        invokeOpts,
-        progressN,
-        "codex",
-      ),
-    ]);
-    progressN.stop();
+      );
+      progress.stop(result.durationMs, !!result.error);
 
-    session.rounds.push({
-      number: crossReviewCount,
-      claude: toAgentResult(refinedA),
-      codex: toAgentResult(refinedB),
-      steer,
-    });
+      const step = toStep(result, stepNumber, "codex", "review", steer);
+      session.steps.push(step);
+    } else {
+      // Next: Claude refines based on review
+      // Find Claude's last output to pass as "own previous"
+      const claudePrevious = findLastByAgent(session.steps, "claude");
+      const progress = startProgress("claude", "refining");
+      const result = await claude.invoke(
+        buildRefinePrompt(task, claudePrevious?.content ?? "", lastStep.content, steer),
+        invokeOpts,
+      );
+      progress.stop(result.durationMs, !!result.error);
+
+      const step = toStep(result, stepNumber, "claude", "refine", steer);
+      session.steps.push(step);
+    }
+
     persistSession(session, options.sessionDir);
-    displayRound(crossReviewCount, options.maxRounds, session.rounds.at(-1)!.claude, session.rounds.at(-1)!.codex, session.id);
+    displayStep(session.steps.at(-1)!, options.maxSteps - stepCount);
   }
 
-  // Always persist final state
   persistSession(session, options.sessionDir);
   return session;
 }
@@ -186,12 +174,11 @@ export async function resumeSession(
   session: Session,
   options: RunOptions,
 ): Promise<Session> {
-  // Display last completed round
-  const lastRound = session.rounds.at(-1);
-  if (lastRound) {
-    displaySessionHeader(session.task, session.maxRounds, session.workdir);
-    console.log(`  Resuming from round ${lastRound.number}\n`);
-    displayRound(lastRound.number, session.maxRounds, lastRound.claude, lastRound.codex, session.id);
+  const lastStep = session.steps.at(-1);
+  if (lastStep) {
+    displaySessionHeader(session.task, session.maxSteps, session.workdir);
+    console.log(`  Resuming from step ${lastStep.number}\n`);
+    displayStep(lastStep, session.maxSteps - (session.steps.length - 1));
   }
 
   const invokeOpts = {
@@ -200,14 +187,12 @@ export async function resumeSession(
     allowWrites: options.allowWrites,
   };
 
-  // Count existing cross-review rounds (round 0 is independent)
-  let crossReviewCount = Math.max(0, session.rounds.length - 1);
+  let stepCount = session.steps.length - 1; // exclude step 0
 
-  // HITL loop (same as run)
   while (true) {
-    const roundsLeft = session.maxRounds - crossReviewCount;
-    const atLimit = roundsLeft <= 0;
-    const action = await hitlPrompt({ atLimit, roundsLeft });
+    const stepsLeft = session.maxSteps - stepCount;
+    const atLimit = stepsLeft <= 0;
+    const action = await hitlPrompt({ atLimit, stepsLeft });
 
     if (action === "accept") {
       session.status = "accepted";
@@ -220,38 +205,42 @@ export async function resumeSession(
     }
 
     const steer = action === "steer" ? await getSteerInput() : undefined;
-    const lastRound = session.rounds.at(-1)!;
-    crossReviewCount++;
+    const lastStep = session.steps.at(-1)!;
+    stepCount++;
+    const stepNumber = session.steps.length;
 
-    const progressN = startProgress(`Round ${crossReviewCount} · Cross-review`);
-    const [refinedA, refinedB] = await Promise.all([
-      invokeWithProgress(
-        claude,
-        buildCrossReviewPrompt(session.task, lastRound.claude.content, lastRound.codex.content, steer, session.repos),
+    if (lastStep.agent === "claude") {
+      const progress = startProgress("codex", "reviewing");
+      const result = await codex.invoke(
+        buildReviewPrompt(session.task, lastStep.content, steer),
         invokeOpts,
-        progressN,
-        "claude",
-      ),
-      invokeWithProgress(
-        codex,
-        buildCrossReviewPrompt(session.task, lastRound.codex.content, lastRound.claude.content, steer, session.repos),
-        invokeOpts,
-        progressN,
-        "codex",
-      ),
-    ]);
-    progressN.stop();
+      );
+      progress.stop(result.durationMs, !!result.error);
 
-    session.rounds.push({
-      number: crossReviewCount,
-      claude: toAgentResult(refinedA),
-      codex: toAgentResult(refinedB),
-      steer,
-    });
+      session.steps.push(toStep(result, stepNumber, "codex", "review", steer));
+    } else {
+      const claudePrevious = findLastByAgent(session.steps, "claude");
+      const progress = startProgress("claude", "refining");
+      const result = await claude.invoke(
+        buildRefinePrompt(session.task, claudePrevious?.content ?? "", lastStep.content, steer),
+        invokeOpts,
+      );
+      progress.stop(result.durationMs, !!result.error);
+
+      session.steps.push(toStep(result, stepNumber, "claude", "refine", steer));
+    }
+
     persistSession(session, options.sessionDir);
-    displayRound(crossReviewCount, session.maxRounds, session.rounds.at(-1)!.claude, session.rounds.at(-1)!.codex, session.id);
+    displayStep(session.steps.at(-1)!, session.maxSteps - stepCount);
   }
 
   persistSession(session, options.sessionDir);
   return session;
+}
+
+function findLastByAgent(steps: readonly { agent: string; content: string }[], agent: string) {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i]!.agent === agent) return steps[i]!;
+  }
+  return null;
 }

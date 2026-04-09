@@ -13,19 +13,16 @@ export function saveArtifact(session: Session, artifactRoot?: string): string | 
   const dir = join(artifactRoot ?? defaultArtifactDir(), session.id);
   mkdirSync(dir, { recursive: true });
 
-  const lastRound = session.rounds.at(-1)!;
-  const totalDurationMs = session.rounds.reduce(
-    (sum, r) => sum + Math.max(r.claude.durationMs, r.codex.durationMs),
-    0,
-  );
-  const steerCount = session.rounds.filter((r) => r.steer).length;
+  const lastStep = session.steps.at(-1)!;
+  const totalDurationMs = session.steps.reduce((sum, s) => sum + s.durationMs, 0);
+  const steerCount = session.steps.filter((s) => s.steer).length;
   const title = session.task.slice(0, 80);
 
   const markdown = `---
 title: "${title.replace(/"/g, '\\"')}"
 conclave_session: "${session.id}"
 agents: [claude, codex]
-rounds: ${session.rounds.length}
+steps: ${session.steps.length}
 duration_seconds: ${Math.round(totalDurationMs / 1000)}
 status: ${session.status}
 created: ${session.startedAt}
@@ -34,22 +31,22 @@ accepted: ${session.acceptedAt ?? ""}
 
 # ${session.task}
 
-## Claude — Final Analysis
-${lastRound.claude.content || "(no output)"}
+## Final Output
+${lastStep.content || "(no output)"}
 
-## Codex — Final Analysis
-${lastRound.codex.content || "(no output)"}
+## Session History
+${session.steps.map((s) => `### Step ${s.number} — ${s.agent} (${s.role})${s.steer ? ` [steered]` : ""}
+${s.content || "(no output)"}
+`).join("\n")}
 
-## Session Metadata
-- Rounds: ${session.rounds.length}
+## Metadata
+- Steps: ${session.steps.length}
 - Total duration: ${formatDuration(totalDurationMs)}
 - Steer interventions: ${steerCount}
 `;
 
   const outputPath = join(dir, "output.md");
   Bun.write(outputPath, markdown);
-
-  // Also save raw session JSON alongside
   Bun.write(join(dir, "session.json"), JSON.stringify(session, null, 2));
 
   return outputPath;

@@ -1,6 +1,13 @@
 import type { Adapter } from "./adapters/types.ts";
 import { createSession, persistSession, toAgentResult, type Session } from "./session.ts";
-import { displayRound, displaySpinner, getSteerInput, hitlPrompt } from "./ui.ts";
+import {
+  displayCompletion,
+  displayRound,
+  displaySessionHeader,
+  getSteerInput,
+  hitlPrompt,
+  startProgress,
+} from "./ui.ts";
 
 export interface RunOptions {
   workdir?: string;
@@ -65,6 +72,22 @@ Be specific about what changed from your previous position and why.`;
   return prompt;
 }
 
+async function invokeWithProgress(
+  adapter: Adapter,
+  prompt: string,
+  invokeOpts: { workdir?: string; timeout?: number; allowWrites?: boolean },
+  progress: ReturnType<typeof startProgress>,
+  agentKey: "claude" | "codex",
+) {
+  const result = await adapter.invoke(prompt, invokeOpts);
+  if (result.error) {
+    progress.markError(agentKey, result.durationMs);
+  } else {
+    progress.markDone(agentKey, result.durationMs);
+  }
+  return result;
+}
+
 export async function run(
   claude: Adapter,
   codex: Adapter,
@@ -77,19 +100,21 @@ export async function run(
     maxRounds: options.maxRounds,
   });
 
+  displaySessionHeader(task, options.maxRounds, options.workdir);
+
   const invokeOpts = {
     workdir: options.workdir,
     timeout: options.timeout,
     allowWrites: options.allowWrites,
   };
 
-  // Round 0: Independent drafts (parallel)
-  const spinner0 = displaySpinner("Round 0: agents exploring independently...");
+  // Round 0: Independent drafts (parallel, with progress)
+  const progress0 = startProgress("Round 0 · Independent analysis");
   const [resultA, resultB] = await Promise.all([
-    claude.invoke(buildInitialPrompt(task, options.repos), invokeOpts),
-    codex.invoke(buildInitialPrompt(task, options.repos), invokeOpts),
+    invokeWithProgress(claude, buildInitialPrompt(task, options.repos), invokeOpts, progress0, "claude"),
+    invokeWithProgress(codex, buildInitialPrompt(task, options.repos), invokeOpts, progress0, "codex"),
   ]);
-  spinner0.stop();
+  progress0.stop();
 
   session.rounds.push({
     number: 0,
@@ -97,7 +122,7 @@ export async function run(
     codex: toAgentResult(resultB),
   });
   persistSession(session, options.sessionDir);
-  displayRound(0, session.rounds[0]!.claude, session.rounds[0]!.codex);
+  displayRound(0, options.maxRounds, session.rounds[0]!.claude, session.rounds[0]!.codex, session.id);
 
   // HITL loop
   let crossReviewCount = 0;
@@ -119,19 +144,25 @@ export async function run(
     const lastRound = session.rounds.at(-1)!;
     crossReviewCount++;
 
-    // Cross-review: each agent sees own prev + other's prev (parallel, stateless)
-    const spinnerN = displaySpinner(`Round ${crossReviewCount}: agents cross-reviewing...`);
+    // Cross-review: each agent sees own prev + other's prev (parallel, with progress)
+    const progressN = startProgress(`Round ${crossReviewCount} · Cross-review`);
     const [refinedA, refinedB] = await Promise.all([
-      claude.invoke(
+      invokeWithProgress(
+        claude,
         buildCrossReviewPrompt(task, lastRound.claude.content, lastRound.codex.content, steer, options.repos),
         invokeOpts,
+        progressN,
+        "claude",
       ),
-      codex.invoke(
+      invokeWithProgress(
+        codex,
         buildCrossReviewPrompt(task, lastRound.codex.content, lastRound.claude.content, steer, options.repos),
         invokeOpts,
+        progressN,
+        "codex",
       ),
     ]);
-    spinnerN.stop();
+    progressN.stop();
 
     session.rounds.push({
       number: crossReviewCount,
@@ -140,7 +171,7 @@ export async function run(
       steer,
     });
     persistSession(session, options.sessionDir);
-    displayRound(crossReviewCount, session.rounds.at(-1)!.claude, session.rounds.at(-1)!.codex);
+    displayRound(crossReviewCount, options.maxRounds, session.rounds.at(-1)!.claude, session.rounds.at(-1)!.codex, session.id);
   }
 
   // Always persist final state
@@ -157,8 +188,9 @@ export async function resumeSession(
   // Display last completed round
   const lastRound = session.rounds.at(-1);
   if (lastRound) {
-    console.log(`\nResuming session ${session.id} from round ${lastRound.number}`);
-    displayRound(lastRound.number, lastRound.claude, lastRound.codex);
+    displaySessionHeader(session.task, session.maxRounds, session.workdir);
+    console.log(`  Resuming from round ${lastRound.number}\n`);
+    displayRound(lastRound.number, session.maxRounds, lastRound.claude, lastRound.codex, session.id);
   }
 
   const invokeOpts = {
@@ -189,18 +221,24 @@ export async function resumeSession(
     const lastRound = session.rounds.at(-1)!;
     crossReviewCount++;
 
-    const spinnerN = displaySpinner(`Round ${crossReviewCount}: agents cross-reviewing...`);
+    const progressN = startProgress(`Round ${crossReviewCount} · Cross-review`);
     const [refinedA, refinedB] = await Promise.all([
-      claude.invoke(
+      invokeWithProgress(
+        claude,
         buildCrossReviewPrompt(session.task, lastRound.claude.content, lastRound.codex.content, steer, session.repos),
         invokeOpts,
+        progressN,
+        "claude",
       ),
-      codex.invoke(
+      invokeWithProgress(
+        codex,
         buildCrossReviewPrompt(session.task, lastRound.codex.content, lastRound.claude.content, steer, session.repos),
         invokeOpts,
+        progressN,
+        "codex",
       ),
     ]);
-    spinnerN.stop();
+    progressN.stop();
 
     session.rounds.push({
       number: crossReviewCount,
@@ -209,7 +247,7 @@ export async function resumeSession(
       steer,
     });
     persistSession(session, options.sessionDir);
-    displayRound(crossReviewCount, session.rounds.at(-1)!.claude, session.rounds.at(-1)!.codex);
+    displayRound(crossReviewCount, session.maxRounds, session.rounds.at(-1)!.claude, session.rounds.at(-1)!.codex, session.id);
   }
 
   persistSession(session, options.sessionDir);

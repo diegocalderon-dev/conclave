@@ -5,6 +5,7 @@ import { CodexAdapter } from "./adapters/codex.ts";
 import { run, resumeSession } from "./orchestrator.ts";
 import { loadSession, listSessions } from "./session.ts";
 import { saveArtifact } from "./artifact.ts";
+import { displayCompletion } from "./ui.ts";
 
 const DEFAULT_MAX_ROUNDS = 3;
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes in ms
@@ -36,13 +37,17 @@ async function doctor(): Promise<void> {
 
   const [claudeResult, codexResult] = await Promise.all([claude.detect(), codex.detect()]);
 
-  console.log("Adapter Status:");
+  const ok = "\x1b[32m✓\x1b[0m";
+  const fail = "\x1b[31m✗\x1b[0m";
+
+  console.log("\n\x1b[1mAdapter Status\x1b[0m");
   console.log(
-    `  Claude: ${claudeResult.available ? "available" : "NOT FOUND"}${claudeResult.version ? ` (${claudeResult.version})` : ""}${claudeResult.error ? ` — ${claudeResult.error}` : ""}`,
+    `  ${claudeResult.available ? ok : fail} \x1b[1m\x1b[35mClaude\x1b[0m  ${claudeResult.version ? `\x1b[2m${claudeResult.version}\x1b[0m` : ""}${claudeResult.error ? `  \x1b[31m${claudeResult.error}\x1b[0m` : ""}`,
   );
   console.log(
-    `  Codex:  ${codexResult.available ? "available" : "NOT FOUND"}${codexResult.version ? ` (${codexResult.version})` : ""}${codexResult.error ? ` — ${codexResult.error}` : ""}`,
+    `  ${codexResult.available ? ok : fail} \x1b[1m\x1b[32mCodex\x1b[0m   ${codexResult.version ? `\x1b[2m${codexResult.version}\x1b[0m` : ""}${codexResult.error ? `  \x1b[31m${codexResult.error}\x1b[0m` : ""}`,
   );
+  console.log();
 
   if (!claudeResult.available || !codexResult.available) {
     process.exit(1);
@@ -52,15 +57,21 @@ async function doctor(): Promise<void> {
 async function list(): Promise<void> {
   const sessions = listSessions();
   if (sessions.length === 0) {
-    console.log("No sessions found.");
+    console.log("\n  \x1b[2mNo sessions found.\x1b[0m\n");
     return;
   }
 
-  console.log("Sessions:");
+  console.log("\n\x1b[1mSessions\x1b[0m\n");
   for (const s of sessions) {
-    const status = s.status === "accepted" ? "+" : s.status === "abandoned" ? "x" : "~";
-    console.log(`  [${status}] ${s.id}  (${s.rounds} rounds)  ${s.task}`);
+    const icon = s.status === "accepted"
+      ? "\x1b[32m✓\x1b[0m"
+      : s.status === "abandoned"
+        ? "\x1b[33m○\x1b[0m"
+        : "\x1b[36m●\x1b[0m";
+    const rounds = `\x1b[2m${s.rounds} round${s.rounds !== 1 ? "s" : ""}\x1b[0m`;
+    console.log(`  ${icon} \x1b[1m${s.id}\x1b[0m  ${rounds}  ${s.task}`);
   }
+  console.log();
 }
 
 async function resume(sessionId?: string): Promise<void> {
@@ -95,12 +106,8 @@ async function resume(sessionId?: string): Promise<void> {
     repos: session.repos,
   });
 
-  if (finished.status === "accepted") {
-    const path = saveArtifact(finished);
-    if (path) console.log(`\nArtifact saved: ${path}`);
-  } else {
-    console.log(`\nSession ${finished.status}. Run \`conclave resume ${finished.id}\` to continue.`);
-  }
+  const path = finished.status === "accepted" ? saveArtifact(finished) : null;
+  displayCompletion(finished.status as "accepted" | "abandoned", path);
 }
 
 function parseArgs(argv: string[]): {
@@ -206,12 +213,8 @@ async function main(): Promise<void> {
     allowWrites: parsed.allowWrites,
   });
 
-  if (session.status === "accepted") {
-    const path = saveArtifact(session);
-    if (path) console.log(`\nArtifact saved: ${path}`);
-  } else {
-    console.log(`\nSession ${session.status}. Run \`conclave resume ${session.id}\` to continue.`);
-  }
+  const path = session.status === "accepted" ? saveArtifact(session) : null;
+  displayCompletion(session.status as "accepted" | "abandoned", path);
 }
 
 main().catch((err) => {
